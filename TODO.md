@@ -2,15 +2,27 @@
 
 ## to implement
 
-- make tasks have ID:s + add an option to remove a task based on its ID
-- an option to execute a job directly when inserted and after that at the regular cadence
-- an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
+- renamings: ScheduledJob -> Job, Scheduler -> Dispatcher, repo: go-taskman -> go-jobman
+- make AddJob take a Job instead of Task[]
+- add helper ReplaceJob which wraps RemoveJob + AddJob
+- add an option to execute a job directly when inserted and after that at the regular cadence
+- add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
 - dynamic scaleup and scaledown of the number of workers
-- move resultChan close to the scheduler, but add a signal from the worker pool to let the scheduler know it's done closing workers
-- tests for worker_pool.go
+- resultChan
+  - move resultChan close to the scheduler, but add a signal from the worker pool to let the scheduler know it's done closing workers
+  - OR remove it entirely, let Execute return error, let the user handle results and errors
+- priority queue
+  - make internal to package
+- worker pool
+  - make internal to package
+  - tests for worker_pool.go
+- better readme
 
 # feature ideas
 
+- Task control
+  - Make tasks within grouped jobs have ID:s + add an option to remove a task from a job based on its ID
+  - Attach a context to a task, so that it can be cancelled and controlled in other ways
 - Cron-like expressions for scheduling jobs. This would allow for more complex scheduling patterns than just a simple interval.
 - Custom consumers for jobs. If the same app wants to run jobs in the same pool that are different enough that they require different consumers, the app should be able to provide the option to have a custom consumer for each job.
 -A broadcast function, with a fan-out pattern, to send results to multiple channels in parallel.
