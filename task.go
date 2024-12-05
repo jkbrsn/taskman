@@ -13,3 +13,14 @@ type Result struct {
 type Task interface {
 	Execute() Result
 }
+
+// BasicTask is a task that executes a function.
+type BasicTask struct {
+	Function func() Result
+}
+
+// Execure executes the function and returns the result.
+func (f BasicTask) Execute() Result {
+	result := f.Function()
+	return result
+}

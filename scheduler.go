@@ -41,6 +41,12 @@ type ScheduledJob struct {
 	index int // Index within the heap
 }
 
+// AddFunc takes a function and adds it to the Scheduler as a Task.
+func (s *Scheduler) AddFunc(function func() Result, cadence time.Duration, jobID string) {
+	task := BasicTask{function}
+	s.AddJob([]Task{task}, cadence, jobID)
+}
+
 // AddTask adds a Task to the Scheduler.
 // Note: wrapper for AddJob to simplify adding single tasks.
 func (s *Scheduler) AddTask(task Task, cadence time.Duration, jobID string) {

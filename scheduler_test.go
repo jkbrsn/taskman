@@ -94,6 +94,22 @@ func TestSchedulerStop(t *testing.T) {
 	}
 }
 
+func TestAddFunc(t *testing.T) {
+	scheduler := NewScheduler(10, 2, 1)
+	defer scheduler.Stop()
+
+	function := func() Result {
+		return Result{Success: true}
+	}
+	cadence := 100 * time.Millisecond
+	scheduler.AddFunc(function, cadence, "")
+
+	assert.Equal(t, 1, scheduler.jobQueue.Len(), "Expected job queue length to be 1, got %d", scheduler.jobQueue.Len())
+
+	job := scheduler.jobQueue[0]
+	assert.Equal(t, 1, len(job.Tasks), "Expected job to have 1 task, got %d", len(job.Tasks))
+}
+
 func TestAddTask(t *testing.T) {
 	scheduler := NewScheduler(10, 2, 1)
 	defer scheduler.Stop()
