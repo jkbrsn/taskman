@@ -53,9 +53,12 @@ func (s *Scheduler) AddTask(task Task, cadence time.Duration) string {
 	return s.AddJob([]Task{task}, cadence)
 }
 
-// AddJob adds a job of N tasks to the Scheduler.
-// A job is a group of tasks that are scheduled to execute together.
-// Requirements: tasks must have a cadence greater than 0, jobID must be unique.
+/*
+AddJob adds a job of N tasks to the Scheduler. A job is a group of tasks that
+are scheduled to execute together. Tasks must implement the Task interface and
+the input cadence must be greater than 0. The function returns a job ID that
+can be used to remove the job from the Scheduler.
+*/
 func (s *Scheduler) AddJob(tasks []Task, cadence time.Duration) string {
 	// Jobs with cadence <= 0 are ignored, as such a job would execute immediately and continuously
 	// and risk overwhelming the worker pool.
@@ -117,10 +120,12 @@ func (s *Scheduler) RemoveJob(jobID string) {
 	// Find the job in the heap and remove it
 	for i, job := range s.jobQueue {
 		if job.ID == jobID {
+			log.Debug().Msgf("Removing job with ID '%s'", jobID)
 			heap.Remove(&s.jobQueue, i)
 			break
 		}
 	}
+	log.Warn().Msgf("Job with ID '%s' not found, no job was removed", jobID)
 }
 
 // Start starts the Scheduler.
