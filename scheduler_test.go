@@ -78,7 +78,7 @@ func TestSchedulerStop(t *testing.T) {
 	testTask := MockTask{ID: "a-task", cadence: 50 * time.Millisecond, executeFunc: func() {
 		testChan <- true
 	}}
-	scheduler.AddTask(testTask, testTask.cadence, testTask.ID)
+	scheduler.AddTask(testTask, testTask.cadence)
 
 	// Since the scheduler is stopped, the task should not have been added to the job queue
 	if scheduler.jobQueue.Len() != 0 {
@@ -102,12 +102,13 @@ func TestAddFunc(t *testing.T) {
 		return Result{Success: true}
 	}
 	cadence := 100 * time.Millisecond
-	scheduler.AddFunc(function, cadence, "")
+	jobID := scheduler.AddFunc(function, cadence)
 
 	assert.Equal(t, 1, scheduler.jobQueue.Len(), "Expected job queue length to be 1, got %d", scheduler.jobQueue.Len())
 
 	job := scheduler.jobQueue[0]
 	assert.Equal(t, 1, len(job.Tasks), "Expected job to have 1 task, got %d", len(job.Tasks))
+	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 }
 
 func TestAddTask(t *testing.T) {
@@ -115,13 +116,14 @@ func TestAddTask(t *testing.T) {
 	defer scheduler.Stop()
 
 	testTask := MockTask{ID: "test-task", cadence: 100 * time.Millisecond}
-	scheduler.AddTask(testTask, testTask.cadence, testTask.ID)
+	jobID := scheduler.AddTask(testTask, testTask.cadence)
 
 	assert.Equal(t, 1, scheduler.jobQueue.Len(), "Expected job queue length to be 1, got %d", scheduler.jobQueue.Len())
 
 	job := scheduler.jobQueue[0]
 	assert.Equal(t, 1, len(job.Tasks), "Expected job to have 1 task, got %d", len(job.Tasks))
 	assert.Equal(t, testTask, job.Tasks[0], "Expected the task in the job to be the test task")
+	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 }
 
 func TestAddJob(t *testing.T) {
@@ -137,12 +139,13 @@ func TestAddJob(t *testing.T) {
 	for i, task := range mockTasks {
 		tasks[i] = task
 	}
-	scheduler.AddJob(tasks, 100*time.Millisecond, "group1")
+	jobID := scheduler.AddJob(tasks, 100*time.Millisecond)
 
 	// Assert that the job was added
 	assert.Equal(t, 1, scheduler.jobQueue.Len(), "Expected job queue length to be 1, got %d", scheduler.jobQueue.Len())
 	job := scheduler.jobQueue[0]
 	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
+	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 }
 
 func TestRemoveJob(t *testing.T) {
@@ -158,15 +161,16 @@ func TestRemoveJob(t *testing.T) {
 	for i, task := range mockTasks {
 		tasks[i] = task
 	}
-	scheduler.AddJob(tasks, 100*time.Millisecond, "group1")
+	jobID := scheduler.AddJob(tasks, 100*time.Millisecond)
 
 	// Assert that the job was added
 	assert.Equal(t, 1, scheduler.jobQueue.Len(), "Expected job queue length to be 1, got %d", scheduler.jobQueue.Len())
 	job := scheduler.jobQueue[0]
+	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
 
 	// Remove the job
-	scheduler.RemoveJob("group1")
+	scheduler.RemoveJob(jobID)
 
 	// Assert that the job was removed
 	assert.Equal(t, 0, scheduler.jobQueue.Len(), "Expected job queue length to be 0, got %d", scheduler.jobQueue.Len())
@@ -193,7 +197,7 @@ func TestTaskExecution(t *testing.T) {
 		},
 	}
 
-	scheduler.AddTask(testTask, testTask.cadence, testTask.ID)
+	scheduler.AddTask(testTask, testTask.cadence)
 
 	select {
 	case execTime := <-executionTimes:
@@ -224,7 +228,7 @@ func TestTaskRescheduling(t *testing.T) {
 		},
 	}
 
-	scheduler.AddTask(mockTask, mockTask.cadence, mockTask.ID)
+	scheduler.AddTask(mockTask, mockTask.cadence)
 
 	// Wait for the task to execute multiple times
 	// Sleeing for 350ms should allow for about 3 executions
@@ -305,7 +309,7 @@ func TestAddTaskDuringExecution(t *testing.T) {
 	}
 
 	// Schedule first task
-	scheduler.AddTask(testTask1, testTask1.cadence, testTask1.ID)
+	scheduler.AddTask(testTask1, testTask1.cadence)
 	start := time.Now()
 
 	select {
@@ -323,7 +327,7 @@ func TestAddTaskDuringExecution(t *testing.T) {
 	}()
 
 	// Schedule second task after we've had at least one execution of the first task
-	scheduler.AddTask(testTask2, testTask2.cadence, testTask2.ID)
+	scheduler.AddTask(testTask2, testTask2.cadence)
 
 	// Sleep enough time to make sure both tasks have executed at least once
 	time.Sleep(30 * time.Millisecond)
@@ -359,7 +363,7 @@ func TestConcurrentAddTask(t *testing.T) {
 			for j := 0; j < numTasksPerGoroutine; j++ {
 				taskID := fmt.Sprintf("task-%d-%d", id, j)
 				task := MockTask{ID: taskID, cadence: 100 * time.Millisecond}
-				scheduler.AddTask(task, task.cadence, task.ID)
+				scheduler.AddTask(task, task.cadence)
 			}
 		}(i)
 	}
@@ -379,7 +383,7 @@ func TestZeroCadenceTask(t *testing.T) {
 	testTask := MockTask{ID: "zero-cadence-task", cadence: 0, executeFunc: func() {
 		testChan <- true
 	}}
-	scheduler.AddTask(testTask, testTask.cadence, testTask.ID)
+	scheduler.AddTask(testTask, testTask.cadence)
 
 	// Expect the task to not execute
 	select {

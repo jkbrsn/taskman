@@ -42,30 +42,31 @@ type ScheduledJob struct {
 }
 
 // AddFunc takes a function and adds it to the Scheduler as a Task.
-func (s *Scheduler) AddFunc(function func() Result, cadence time.Duration, jobID string) {
+func (s *Scheduler) AddFunc(function func() Result, cadence time.Duration) string {
 	task := BasicTask{function}
-	s.AddJob([]Task{task}, cadence, jobID)
+	return s.AddJob([]Task{task}, cadence)
 }
 
 // AddTask adds a Task to the Scheduler.
-// Note: wrapper for AddJob to simplify adding single tasks.
-func (s *Scheduler) AddTask(task Task, cadence time.Duration, jobID string) {
-	s.AddJob([]Task{task}, cadence, jobID)
+// Note: wrapper to simplify adding single tasks.
+func (s *Scheduler) AddTask(task Task, cadence time.Duration) string {
+	return s.AddJob([]Task{task}, cadence)
 }
 
 // AddJob adds a job of N tasks to the Scheduler.
+// A job is a group of tasks that are scheduled to execute together.
 // Requirements: tasks must have a cadence greater than 0, jobID must be unique.
-func (s *Scheduler) AddJob(tasks []Task, cadence time.Duration, jobID string) {
-	// Jobs with cadence < 0 are ignored, as a negative cadence makes no sense
-	// Jobs with cadence == 0 are ignored, as a zero cadence would continuously execute the job and risk overwhelming the worker pool
+func (s *Scheduler) AddJob(tasks []Task, cadence time.Duration) string {
+	// Jobs with cadence <= 0 are ignored, as such a job would execute immediately and continuously
+	// and risk overwhelming the worker pool.
 	if cadence <= 0 {
-		log.Warn().Msgf("Ignoring job with cadence %v (ID '%s'): cadence must be greater than 0.", cadence, jobID)
-		return
+		// TODO: return an error?
+		log.Warn().Msgf("Not adding job: cadence must be greater than 0 (was %v)", cadence)
+		return ""
 	}
-	// If no job ID is provided, generate a 12 char random ID
-	if jobID == "" {
-		jobID = strings.Split(uuid.New().String(), "-")[0]
-	}
+
+	// Generate a 12 char random ID as the job ID
+	jobID := strings.Split(uuid.New().String(), "-")[0]
 	log.Debug().Msgf("Adding job with %d tasks with group ID '%s' and cadence %v", len(tasks), jobID, cadence)
 
 	// The job uses a copy of the tasks slice, to avoid unintended consequences if the original slice is modified
@@ -80,8 +81,9 @@ func (s *Scheduler) AddJob(tasks []Task, cadence time.Duration, jobID string) {
 	select {
 	case <-s.ctx.Done():
 		// If the scheduler is stopped, do not continue adding the job
+		// TODO: return an error?
 		log.Debug().Msg("Scheduler is stopped, not adding job")
-		return
+		return ""
 	default:
 		// Do nothing if the scheduler isn't stopped
 	}
@@ -104,6 +106,7 @@ func (s *Scheduler) AddJob(tasks []Task, cadence time.Duration, jobID string) {
 			// Do nothing if no one is listening
 		}
 	}
+	return jobID
 }
 
 // RemoveJob removes a job from the Scheduler.
