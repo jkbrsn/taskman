@@ -126,6 +126,28 @@ func TestAddTask(t *testing.T) {
 	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 }
 
+func TestAddTasks(t *testing.T) {
+	dispatcher := NewDispatcher(10, 2, 1)
+	defer dispatcher.Stop()
+
+	mockTasks := []MockTask{
+		{ID: "task1", cadence: 100 * time.Millisecond},
+		{ID: "task2", cadence: 100 * time.Millisecond},
+	}
+	// Explicitly convert []MockTask to []Task to satisfy the AddTasks method signature, since slices are not covariant in Go
+	tasks := make([]Task, len(mockTasks))
+	for i, task := range mockTasks {
+		tasks[i] = task
+	}
+	jobID := dispatcher.AddTasks(tasks, 100*time.Millisecond)
+
+	// Assert that the job was added
+	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	job := dispatcher.jobQueue[0]
+	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
+	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
+}
+
 func TestAddJob(t *testing.T) {
 	dispatcher := NewDispatcher(10, 2, 1)
 	defer dispatcher.Stop()
@@ -134,18 +156,19 @@ func TestAddJob(t *testing.T) {
 		{ID: "task1", cadence: 100 * time.Millisecond},
 		{ID: "task2", cadence: 100 * time.Millisecond},
 	}
-	// Explicitly convert []MockTask to []Task to satisfy the AddJob method signature, since slices are not covariant in Go
+	// Explicitly convert []MockTask to []Task to satisfy the Job struct
 	tasks := make([]Task, len(mockTasks))
 	for i, task := range mockTasks {
 		tasks[i] = task
 	}
-	jobID := dispatcher.AddJob(tasks, 100*time.Millisecond)
+	job := Job{ID: "test-job", Cadence: 100 * time.Millisecond, Tasks: tasks}
+	jobID := dispatcher.AddJob(job)
 
 	// Assert that the job was added
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
-	job := dispatcher.jobQueue[0]
-	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
-	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
+	scheduledJob := dispatcher.jobQueue[0]
+	assert.Equal(t, len(job.Tasks), len(scheduledJob.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
+	assert.Equal(t, job.ID, scheduledJob.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 }
 
 func TestRemoveJob(t *testing.T) {
@@ -156,12 +179,12 @@ func TestRemoveJob(t *testing.T) {
 		{ID: "task1", cadence: 100 * time.Millisecond},
 		{ID: "task2", cadence: 100 * time.Millisecond},
 	}
-	// Explicitly convert []MockTask to []Task to satisfy the AddJob method signature, since slices are not covariant in Go
+	// Explicitly convert []MockTask to []Task to satisfy the AddTasks method signature, since slices are not covariant in Go
 	tasks := make([]Task, len(mockTasks))
 	for i, task := range mockTasks {
 		tasks[i] = task
 	}
-	jobID := dispatcher.AddJob(tasks, 100*time.Millisecond)
+	jobID := dispatcher.AddTasks(tasks, 100*time.Millisecond)
 
 	// Assert that the job was added
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())

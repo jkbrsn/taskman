@@ -2,7 +2,6 @@
 
 ## to implement
 
-- make AddJob take a Job instead of Task[]
 - add helper ReplaceJob which wraps RemoveJob + AddJob
 - add an option to execute a job directly when inserted and after that at the regular cadence
 - add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
