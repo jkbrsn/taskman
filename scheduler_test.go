@@ -48,87 +48,87 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestNewScheduler(t *testing.T) {
-	scheduler := NewScheduler(10, 1, 1)
-	defer scheduler.Stop()
+func TestNewDispatcher(t *testing.T) {
+	dispatcher := NewDispatcher(10, 1, 1)
+	defer dispatcher.Stop()
 
 	// Verify jobQueue is initialized
-	assert.NotNil(t, scheduler.jobQueue, "Expected job queue to be non-nil")
+	assert.NotNil(t, dispatcher.jobQueue, "Expected job queue to be non-nil")
 
 	// Verify taskChan is initialized and has the correct buffer size
-	assert.NotNil(t, scheduler.taskChan, "Expected task channel to be non-nil")
-	taskChanBuffer := getChannelBufferSize(scheduler.taskChan)
+	assert.NotNil(t, dispatcher.taskChan, "Expected task channel to be non-nil")
+	taskChanBuffer := getChannelBufferSize(dispatcher.taskChan)
 	assert.Equal(t, 1, taskChanBuffer, "Expected task channel to have buffer size 1")
 
 	// Verify resultChan is initialized and has the correct buffer size
-	assert.NotNil(t, scheduler.resultChan, "Expected result channel to be non-nil")
-	resultChanBuffer := getChannelBufferSize(scheduler.resultChan)
+	assert.NotNil(t, dispatcher.resultChan, "Expected result channel to be non-nil")
+	resultChanBuffer := getChannelBufferSize(dispatcher.resultChan)
 	assert.Equal(t, 1, resultChanBuffer, "Expected result channel to have buffer size 1")
 }
 
-func TestSchedulerStop(t *testing.T) {
-	// NewSceduler starts the scheduler
-	scheduler := NewScheduler(10, 2, 1)
+func TestDispatcherStop(t *testing.T) {
+	// NewSceduler starts the dispatcher
+	dispatcher := NewDispatcher(10, 2, 1)
 
-	// Immediately stop the scheduler
-	scheduler.Stop()
+	// Immediately stop the dispatcher
+	dispatcher.Stop()
 
 	// Attempt to add a task after stopping
 	testChan := make(chan bool)
 	testTask := MockTask{ID: "a-task", cadence: 50 * time.Millisecond, executeFunc: func() {
 		testChan <- true
 	}}
-	scheduler.AddTask(testTask, testTask.cadence)
+	dispatcher.AddTask(testTask, testTask.cadence)
 
-	// Since the scheduler is stopped, the task should not have been added to the job queue
-	if scheduler.jobQueue.Len() != 0 {
-		t.Fatalf("Expected job queue length to be 0, got %d", scheduler.jobQueue.Len())
+	// Since the dispatcher is stopped, the task should not have been added to the job queue
+	if dispatcher.jobQueue.Len() != 0 {
+		t.Fatalf("Expected job queue length to be 0, got %d", dispatcher.jobQueue.Len())
 	}
 
 	// Wait some time to see if the task executes
 	select {
 	case <-testChan:
-		t.Fatal("Did not expect any tasks to be executed after scheduler is stopped")
+		t.Fatal("Did not expect any tasks to be executed after dispatcher is stopped")
 	case <-time.After(100 * time.Millisecond):
 		// No tasks executed, as expected
 	}
 }
 
 func TestAddFunc(t *testing.T) {
-	scheduler := NewScheduler(10, 2, 1)
-	defer scheduler.Stop()
+	dispatcher := NewDispatcher(10, 2, 1)
+	defer dispatcher.Stop()
 
 	function := func() Result {
 		return Result{Success: true}
 	}
 	cadence := 100 * time.Millisecond
-	jobID := scheduler.AddFunc(function, cadence)
+	jobID := dispatcher.AddFunc(function, cadence)
 
-	assert.Equal(t, 1, scheduler.jobQueue.Len(), "Expected job queue length to be 1, got %d", scheduler.jobQueue.Len())
+	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
 
-	job := scheduler.jobQueue[0]
+	job := dispatcher.jobQueue[0]
 	assert.Equal(t, 1, len(job.Tasks), "Expected job to have 1 task, got %d", len(job.Tasks))
 	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 }
 
 func TestAddTask(t *testing.T) {
-	scheduler := NewScheduler(10, 2, 1)
-	defer scheduler.Stop()
+	dispatcher := NewDispatcher(10, 2, 1)
+	defer dispatcher.Stop()
 
 	testTask := MockTask{ID: "test-task", cadence: 100 * time.Millisecond}
-	jobID := scheduler.AddTask(testTask, testTask.cadence)
+	jobID := dispatcher.AddTask(testTask, testTask.cadence)
 
-	assert.Equal(t, 1, scheduler.jobQueue.Len(), "Expected job queue length to be 1, got %d", scheduler.jobQueue.Len())
+	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
 
-	job := scheduler.jobQueue[0]
+	job := dispatcher.jobQueue[0]
 	assert.Equal(t, 1, len(job.Tasks), "Expected job to have 1 task, got %d", len(job.Tasks))
 	assert.Equal(t, testTask, job.Tasks[0], "Expected the task in the job to be the test task")
 	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 }
 
 func TestAddJob(t *testing.T) {
-	scheduler := NewScheduler(10, 2, 1)
-	defer scheduler.Stop()
+	dispatcher := NewDispatcher(10, 2, 1)
+	defer dispatcher.Stop()
 
 	mockTasks := []MockTask{
 		{ID: "task1", cadence: 100 * time.Millisecond},
@@ -139,18 +139,18 @@ func TestAddJob(t *testing.T) {
 	for i, task := range mockTasks {
 		tasks[i] = task
 	}
-	jobID := scheduler.AddJob(tasks, 100*time.Millisecond)
+	jobID := dispatcher.AddJob(tasks, 100*time.Millisecond)
 
 	// Assert that the job was added
-	assert.Equal(t, 1, scheduler.jobQueue.Len(), "Expected job queue length to be 1, got %d", scheduler.jobQueue.Len())
-	job := scheduler.jobQueue[0]
+	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	job := dispatcher.jobQueue[0]
 	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
 	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 }
 
 func TestRemoveJob(t *testing.T) {
-	scheduler := NewScheduler(10, 2, 1)
-	defer scheduler.Stop()
+	dispatcher := NewDispatcher(10, 2, 1)
+	defer dispatcher.Stop()
 
 	mockTasks := []MockTask{
 		{ID: "task1", cadence: 100 * time.Millisecond},
@@ -161,24 +161,24 @@ func TestRemoveJob(t *testing.T) {
 	for i, task := range mockTasks {
 		tasks[i] = task
 	}
-	jobID := scheduler.AddJob(tasks, 100*time.Millisecond)
+	jobID := dispatcher.AddJob(tasks, 100*time.Millisecond)
 
 	// Assert that the job was added
-	assert.Equal(t, 1, scheduler.jobQueue.Len(), "Expected job queue length to be 1, got %d", scheduler.jobQueue.Len())
-	job := scheduler.jobQueue[0]
+	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	job := dispatcher.jobQueue[0]
 	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
 	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
 
 	// Remove the job
-	scheduler.RemoveJob(jobID)
+	dispatcher.RemoveJob(jobID)
 
 	// Assert that the job was removed
-	assert.Equal(t, 0, scheduler.jobQueue.Len(), "Expected job queue length to be 0, got %d", scheduler.jobQueue.Len())
+	assert.Equal(t, 0, dispatcher.jobQueue.Len(), "Expected job queue length to be 0, got %d", dispatcher.jobQueue.Len())
 }
 
 func TestTaskExecution(t *testing.T) {
-	scheduler := NewScheduler(10, 1, 1)
-	defer scheduler.Stop()
+	dispatcher := NewDispatcher(10, 1, 1)
+	defer dispatcher.Stop()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -197,7 +197,7 @@ func TestTaskExecution(t *testing.T) {
 		},
 	}
 
-	scheduler.AddTask(testTask, testTask.cadence)
+	dispatcher.AddTask(testTask, testTask.cadence)
 
 	select {
 	case execTime := <-executionTimes:
@@ -211,8 +211,8 @@ func TestTaskExecution(t *testing.T) {
 func TestTaskRescheduling(t *testing.T) {
 	// Make room in buffered channel for multiple results, since we're not consuming them in this test
 	// and the results channel otherwise blocks the workers from executing tasks
-	scheduler := NewScheduler(10, 1, 4)
-	defer scheduler.Stop()
+	dispatcher := NewDispatcher(10, 1, 4)
+	defer dispatcher.Stop()
 
 	var executionTimes []time.Time
 	var mu sync.Mutex
@@ -228,7 +228,7 @@ func TestTaskRescheduling(t *testing.T) {
 		},
 	}
 
-	scheduler.AddTask(mockTask, mockTask.cadence)
+	dispatcher.AddTask(mockTask, mockTask.cadence)
 
 	// Wait for the task to execute multiple times
 	// Sleeing for 350ms should allow for about 3 executions
@@ -253,12 +253,12 @@ func TestTaskRescheduling(t *testing.T) {
 
 // TODO: clean test up, removing some logs
 func TestAddTaskDuringExecution(t *testing.T) {
-	scheduler := NewScheduler(10, 1, 1)
-	defer scheduler.Stop()
+	dispatcher := NewDispatcher(10, 1, 1)
+	defer dispatcher.Stop()
 
 	// Consume resultChan to prevent workers from blocking
 	go func() {
-		for range scheduler.Results() {
+		for range dispatcher.Results() {
 			// Do nothing
 		}
 	}()
@@ -309,7 +309,7 @@ func TestAddTaskDuringExecution(t *testing.T) {
 	}
 
 	// Schedule first task
-	scheduler.AddTask(testTask1, testTask1.cadence)
+	dispatcher.AddTask(testTask1, testTask1.cadence)
 	start := time.Now()
 
 	select {
@@ -327,13 +327,13 @@ func TestAddTaskDuringExecution(t *testing.T) {
 	}()
 
 	// Schedule second task after we've had at least one execution of the first task
-	scheduler.AddTask(testTask2, testTask2.cadence)
+	dispatcher.AddTask(testTask2, testTask2.cadence)
 
 	// Sleep enough time to make sure both tasks have executed at least once
 	time.Sleep(30 * time.Millisecond)
 
 	cancel()
-	scheduler.Stop()
+	dispatcher.Stop()
 
 	// Check that both tasks have executed
 	mu.Lock()
@@ -349,8 +349,8 @@ func TestConcurrentAddTask(t *testing.T) {
 	// Deactivate debug logs for this test
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.999"}).Level(zerolog.InfoLevel)
 
-	scheduler := NewScheduler(10, 1, 1)
-	defer scheduler.Stop()
+	dispatcher := NewDispatcher(10, 1, 1)
+	defer dispatcher.Stop()
 
 	var wg sync.WaitGroup
 	numGoroutines := 20
@@ -363,7 +363,7 @@ func TestConcurrentAddTask(t *testing.T) {
 			for j := 0; j < numTasksPerGoroutine; j++ {
 				taskID := fmt.Sprintf("task-%d-%d", id, j)
 				task := MockTask{ID: taskID, cadence: 100 * time.Millisecond}
-				scheduler.AddTask(task, task.cadence)
+				dispatcher.AddTask(task, task.cadence)
 			}
 		}(i)
 	}
@@ -372,18 +372,18 @@ func TestConcurrentAddTask(t *testing.T) {
 
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
-	assert.Equal(t, expectedTasks, scheduler.jobQueue.Len(), "Expected job queue length to be %d, got %d", expectedTasks, scheduler.jobQueue.Len())
+	assert.Equal(t, expectedTasks, dispatcher.jobQueue.Len(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobQueue.Len())
 }
 
 func TestZeroCadenceTask(t *testing.T) {
-	scheduler := NewScheduler(10, 1, 1)
-	defer scheduler.Stop()
+	dispatcher := NewDispatcher(10, 1, 1)
+	defer dispatcher.Stop()
 
 	testChan := make(chan bool)
 	testTask := MockTask{ID: "zero-cadence-task", cadence: 0, executeFunc: func() {
 		testChan <- true
 	}}
-	scheduler.AddTask(testTask, testTask.cadence)
+	dispatcher.AddTask(testTask, testTask.cadence)
 
 	// Expect the task to not execute
 	select {

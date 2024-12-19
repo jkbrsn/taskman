@@ -11,12 +11,13 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Scheduler manages task scheduling, using a worker pool to execture tasks based on their cadence.
-type Scheduler struct {
+// Dispatcher manages task scheduling and execution.
+// It dispatches scheduled jobs to a worker pool for execution.
+type Dispatcher struct {
 	sync.RWMutex
 
-	ctx    context.Context    // Context for the scheduler
-	cancel context.CancelFunc // Cancel function for the scheduler
+	ctx    context.Context    // Context for the dispatcher
+	cancel context.CancelFunc // Cancel function for the dispatcher
 
 	newTaskChan chan bool     // Channel to signal that new tasks have entered the queue
 	resultChan  chan Result   // Channel to receive results from the worker pool
@@ -30,8 +31,8 @@ type Scheduler struct {
 	workerPool *WorkerPool
 }
 
-// ScheduledJob represents a group of tasks that are scheduled for execution.
-type ScheduledJob struct {
+// Job describes when to execute a specific group of tasks.
+type Job struct {
 	Tasks []Task
 
 	Cadence  time.Duration
@@ -41,25 +42,25 @@ type ScheduledJob struct {
 	index int // Index within the heap
 }
 
-// AddFunc takes a function and adds it to the Scheduler as a Task.
-func (s *Scheduler) AddFunc(function func() Result, cadence time.Duration) string {
+// AddFunc takes a function and adds it to the Dispatcher as a Task.
+func (s *Dispatcher) AddFunc(function func() Result, cadence time.Duration) string {
 	task := BasicTask{function}
 	return s.AddJob([]Task{task}, cadence)
 }
 
-// AddTask adds a Task to the Scheduler.
+// AddTask adds a Task to the Dispatcher.
 // Note: wrapper to simplify adding single tasks.
-func (s *Scheduler) AddTask(task Task, cadence time.Duration) string {
+func (s *Dispatcher) AddTask(task Task, cadence time.Duration) string {
 	return s.AddJob([]Task{task}, cadence)
 }
 
 /*
-AddJob adds a job of N tasks to the Scheduler. A job is a group of tasks that
+AddJob adds a job of N tasks to the Dispatcher. A job is a group of tasks that
 are scheduled to execute together. Tasks must implement the Task interface and
 the input cadence must be greater than 0. The function returns a job ID that
-can be used to remove the job from the Scheduler.
+can be used to remove the job from the Dispatcher.
 */
-func (s *Scheduler) AddJob(tasks []Task, cadence time.Duration) string {
+func (s *Dispatcher) AddJob(tasks []Task, cadence time.Duration) string {
 	// Jobs with cadence <= 0 are ignored, as such a job would execute immediately and continuously
 	// and risk overwhelming the worker pool.
 	if cadence <= 0 {
@@ -73,22 +74,22 @@ func (s *Scheduler) AddJob(tasks []Task, cadence time.Duration) string {
 	log.Debug().Msgf("Adding job with %d tasks with group ID '%s' and cadence %v", len(tasks), jobID, cadence)
 
 	// The job uses a copy of the tasks slice, to avoid unintended consequences if the original slice is modified
-	job := &ScheduledJob{
+	job := &Job{
 		Tasks:    append([]Task(nil), tasks...),
 		Cadence:  cadence,
 		ID:       jobID,
 		NextExec: time.Now().Add(cadence),
 	}
 
-	// Check if the scheduler is stopped
+	// Check if the dispatcher is stopped
 	select {
 	case <-s.ctx.Done():
-		// If the scheduler is stopped, do not continue adding the job
+		// If the dispatcher is stopped, do not continue adding the job
 		// TODO: return an error?
-		log.Debug().Msg("Scheduler is stopped, not adding job")
+		log.Debug().Msg("Dispatcher is stopped, not adding job")
 		return ""
 	default:
-		// Do nothing if the scheduler isn't stopped
+		// Do nothing if the dispatcher isn't stopped
 	}
 
 	// Push the job to the queue
@@ -96,11 +97,11 @@ func (s *Scheduler) AddJob(tasks []Task, cadence time.Duration) string {
 	heap.Push(&s.jobQueue, job)
 	s.Unlock()
 
-	// Signal the scheduler to check for new tasks
+	// Signal the dispatcher to check for new tasks
 	select {
 	case <-s.ctx.Done():
-		// Do nothing if the scheduler is stopped
-		log.Debug().Msg("Scheduler is stopped, not signaling new task")
+		// Do nothing if the dispatcher is stopped
+		log.Debug().Msg("Dispatcher is stopped, not signaling new task")
 	default:
 		select {
 		case s.newTaskChan <- true:
@@ -112,8 +113,8 @@ func (s *Scheduler) AddJob(tasks []Task, cadence time.Duration) string {
 	return jobID
 }
 
-// RemoveJob removes a job from the Scheduler.
-func (s *Scheduler) RemoveJob(jobID string) {
+// RemoveJob removes a job from the Dispatcher.
+func (s *Dispatcher) RemoveJob(jobID string) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -128,18 +129,18 @@ func (s *Scheduler) RemoveJob(jobID string) {
 	log.Warn().Msgf("Job with ID '%s' not found, no job was removed", jobID)
 }
 
-// Start starts the Scheduler.
-// With this design, the Scheduler manages its own goroutine internally.
-func (s *Scheduler) Start() {
-	log.Info().Msg("Starting scheduler")
+// Start starts the Dispatcher.
+// With this design, the Dispatcher manages its own goroutine internally.
+func (s *Dispatcher) Start() {
+	log.Info().Msg("Starting dispatcher")
 	go s.run()
 }
 
-// run runs the Scheduler.
+// run runs the Dispatcher.
 // This function is intended to be run as a goroutine.
-func (s *Scheduler) run() {
+func (s *Dispatcher) run() {
 	defer func() {
-		log.Debug().Msg("Scheduler run loop exiting")
+		log.Debug().Msg("Dispatcher run loop exiting")
 		close(s.runDone)
 	}()
 	for {
@@ -151,7 +152,7 @@ func (s *Scheduler) run() {
 				log.Trace().Msg("New task added, checking for next job")
 				continue
 			case <-s.ctx.Done():
-				log.Info().Msg("Scheduler received stop signal, exiting run loop")
+				log.Info().Msg("Dispatcher received stop signal, exiting run loop")
 				return
 			}
 		} else {
@@ -167,7 +168,7 @@ func (s *Scheduler) run() {
 				for _, task := range nextJob.Tasks {
 					select {
 					case <-s.ctx.Done():
-						log.Info().Msg("Scheduler received stop signal during task dispatch, exiting run loop")
+						log.Info().Msg("Dispatcher received stop signal during task dispatch, exiting run loop")
 						return
 					case s.taskChan <- task:
 						// Successfully sent the task
@@ -189,7 +190,7 @@ func (s *Scheduler) run() {
 				// Time to execute the next job
 				continue
 			case <-s.ctx.Done():
-				log.Info().Msg("Scheduler received stop signal during wait, exiting run loop")
+				log.Info().Msg("Dispatcher received stop signal during wait, exiting run loop")
 				return
 			}
 		}
@@ -197,16 +198,16 @@ func (s *Scheduler) run() {
 }
 
 // Results returns a read-only channel for consuming results.
-func (s *Scheduler) Results() <-chan Result {
+func (s *Dispatcher) Results() <-chan Result {
 	return s.resultChan
 }
 
-// Stop signals the Scheduler to stop processing tasks and exit.
-// Note: blocks until the Scheduler, including all workers, has completely stopped.
-func (s *Scheduler) Stop() {
-	log.Debug().Msg("Attempting scheduler stop")
+// Stop signals the Dispatcher to stop processing tasks and exit.
+// Note: blocks until the Dispatcher, including all workers, has completely stopped.
+func (s *Dispatcher) Stop() {
+	log.Debug().Msg("Attempting dispatcher stop")
 	s.stopOnce.Do(func() {
-		// Signal the scheduler to stop
+		// Signal the dispatcher to stop
 		s.cancel()
 
 		// Stop the worker pool
@@ -220,23 +221,23 @@ func (s *Scheduler) Stop() {
 		close(s.taskChan)
 		close(s.newTaskChan)
 
-		log.Debug().Msg("Scheduler stopped")
+		log.Debug().Msg("Dispatcher stopped")
 	})
 }
 
-// NewScheduler creates, starts and returns a new Scheduler.
-func NewScheduler(workerCount, taskBufferSize, resultBufferSize int) *Scheduler {
+// NewDispatcher creates, starts and returns a new Dispatcher.
+func NewDispatcher(workerCount, taskBufferSize, resultBufferSize int) *Dispatcher {
 	resultChan := make(chan Result, resultBufferSize)
 	taskChan := make(chan Task, taskBufferSize)
 	workerPool := NewWorkerPool(resultChan, taskChan, workerCount)
-	s := newScheduler(workerPool, taskChan, resultChan)
+	s := newDispatcher(workerPool, taskChan, resultChan)
 	return s
 }
 
-// newScheduler creates a new Scheduler.
+// newDispatcher creates a new Dispatcher.
 // The internal constructor pattern allows for dependency injection of internal components.
-func newScheduler(workerPool *WorkerPool, taskChan chan Task, resultChan chan Result) *Scheduler {
-	log.Debug().Msg("Creating new scheduler")
+func newDispatcher(workerPool *WorkerPool, taskChan chan Task, resultChan chan Result) *Dispatcher {
+	log.Debug().Msg("Creating new dispatcher")
 
 	// Input validation
 	if workerPool == nil {
@@ -251,7 +252,7 @@ func newScheduler(workerPool *WorkerPool, taskChan chan Task, resultChan chan Re
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	s := &Scheduler{
+	s := &Dispatcher{
 		ctx:         ctx,
 		cancel:      cancel,
 		jobQueue:    make(PriorityQueue, 0),
@@ -264,7 +265,7 @@ func newScheduler(workerPool *WorkerPool, taskChan chan Task, resultChan chan Re
 
 	heap.Init(&s.jobQueue)
 
-	log.Debug().Msg("Starting scheduler")
+	log.Debug().Msg("Starting dispatcher")
 	s.workerPool.Start()
 	go s.run()
 

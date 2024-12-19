@@ -1,15 +1,14 @@
-# to-do list for the scheduler package
+# to-do list for the go-taskman package
 
 ## to implement
 
-- renamings: ScheduledJob -> Job, Scheduler -> Dispatcher, repo: go-taskman -> go-jobman
 - make AddJob take a Job instead of Task[]
 - add helper ReplaceJob which wraps RemoveJob + AddJob
 - add an option to execute a job directly when inserted and after that at the regular cadence
 - add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
 - dynamic scaleup and scaledown of the number of workers
 - resultChan
-  - move resultChan close to the scheduler, but add a signal from the worker pool to let the scheduler know it's done closing workers
+  - move resultChan close to the dispatcher, but add a signal from the worker pool to let the dispatcher know it's done closing workers
   - OR remove it entirely, let Execute return error, let the user handle results and errors
 - priority queue
   - make internal to package

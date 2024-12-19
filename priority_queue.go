@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// PriorityQueue implements heap.Interface and holds ScheduledJobs.
-type PriorityQueue []*ScheduledJob
+// PriorityQueue implements heap.Interface and holds Jobs.
+type PriorityQueue []*Job
 
 func (pq PriorityQueue) Len() int { return len(pq) }
 
@@ -24,7 +24,7 @@ func (pq PriorityQueue) Swap(i, j int) {
 // Push adds a job to the heap.
 func (pq *PriorityQueue) Push(x interface{}) {
 	n := len(*pq)
-	job := x.(*ScheduledJob)
+	job := x.(*Job)
 	job.index = n
 	*pq = append(*pq, job)
 }
@@ -40,14 +40,14 @@ func (pq *PriorityQueue) Pop() interface{} {
 }
 
 // Update modifies the NextExec of a job in the heap.
-func (pq *PriorityQueue) Update(job *ScheduledJob, nextExec time.Time) {
+func (pq *PriorityQueue) Update(job *Job, nextExec time.Time) {
 	job.NextExec = nextExec
 	heap.Fix(pq, job.index)
 }
 
 // Peek returns the job with the earliest NextExec time.
 // TODO: test
-func (pq *PriorityQueue) Peek() *ScheduledJob {
+func (pq *PriorityQueue) Peek() *Job {
 	if len(*pq) == 0 {
 		return nil
 	}
@@ -56,6 +56,6 @@ func (pq *PriorityQueue) Peek() *ScheduledJob {
 
 // Remove removes a job from the heap.
 // TODO: test
-func (pq *PriorityQueue) Remove(job *ScheduledJob) {
+func (pq *PriorityQueue) Remove(job *Job) {
 	heap.Remove(pq, job.index)
 }
