@@ -24,7 +24,7 @@ type Dispatcher struct {
 	runDone     chan struct{} // Channel to signal run has stopped
 	taskChan    chan Task     // Channel to send tasks to the worker pool
 
-	jobQueue PriorityQueue // A priority queue to hold the scheduled jobs
+	jobQueue priorityQueue // A priority queue to hold the scheduled jobs
 
 	stopOnce sync.Once
 
@@ -255,7 +255,7 @@ func newDispatcher(workerPool *WorkerPool, taskChan chan Task, resultChan chan R
 	s := &Dispatcher{
 		ctx:         ctx,
 		cancel:      cancel,
-		jobQueue:    make(PriorityQueue, 0),
+		jobQueue:    make(priorityQueue, 0),
 		newTaskChan: make(chan bool, 1),
 		resultChan:  resultChan,
 		runDone:     make(chan struct{}),
