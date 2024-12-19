@@ -7,8 +7,8 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// WorkerPool manages a pool of workers that execute tasks.
-type WorkerPool struct {
+// workerPool manages a pool of workers that execute tasks.
+type workerPool struct {
 	workerCount   int          // Total number of workers in the pool
 	activeWorkers atomic.Int32 // Number of active workers
 
@@ -21,7 +21,7 @@ type WorkerPool struct {
 }
 
 // worker executes tasks from the task channel.
-func (wp *WorkerPool) worker(id int) {
+func (wp *workerPool) worker(id int) {
 	defer wp.wg.Done()
 
 	for {
@@ -52,12 +52,12 @@ func (wp *WorkerPool) worker(id int) {
 }
 
 // ActiveWorkers returns the number of active workers.
-func (wp *WorkerPool) ActiveWorkers() int32 {
+func (wp *workerPool) ActiveWorkers() int32 {
 	return wp.activeWorkers.Load()
 }
 
 // Start starts the worker pool, creating workers according to wp.WorkerCount.
-func (wp *WorkerPool) Start() {
+func (wp *workerPool) Start() {
 	log.Info().Msgf("Starting worker pool with %d workers", wp.workerCount)
 	wp.wg.Add(wp.workerCount)
 	for i := 0; i < wp.workerCount; i++ {
@@ -66,7 +66,7 @@ func (wp *WorkerPool) Start() {
 }
 
 // Stop signals the worker pool to stop processing tasks and exit.
-func (wp *WorkerPool) Stop() {
+func (wp *workerPool) Stop() {
 	log.Debug().Msg("Attempting worker pool stop")
 	close(wp.stopChan) // Signal workers to stop
 	log.Debug().Msg("Waiting for workers to finish")
@@ -75,9 +75,9 @@ func (wp *WorkerPool) Stop() {
 	close(wp.resultChan)
 }
 
-// NewWorkerPool creates a worker pool.
-func NewWorkerPool(resultChannel chan Result, taskChannel chan Task, workerCount int) *WorkerPool {
-	pool := &WorkerPool{
+// NewworkerPool creates a worker pool.
+func NewworkerPool(resultChannel chan Result, taskChannel chan Task, workerCount int) *workerPool {
+	pool := &workerPool{
 		resultChan:  resultChannel,
 		stopChan:    make(chan struct{}),
 		taskChan:    taskChannel,

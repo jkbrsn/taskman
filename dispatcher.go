@@ -28,7 +28,7 @@ type Dispatcher struct {
 
 	stopOnce sync.Once
 
-	workerPool *WorkerPool
+	workerPool *workerPool
 }
 
 // Job describes when to execute a specific group of tasks.
@@ -229,14 +229,14 @@ func (s *Dispatcher) Stop() {
 func NewDispatcher(workerCount, taskBufferSize, resultBufferSize int) *Dispatcher {
 	resultChan := make(chan Result, resultBufferSize)
 	taskChan := make(chan Task, taskBufferSize)
-	workerPool := NewWorkerPool(resultChan, taskChan, workerCount)
+	workerPool := NewworkerPool(resultChan, taskChan, workerCount)
 	s := newDispatcher(workerPool, taskChan, resultChan)
 	return s
 }
 
 // newDispatcher creates a new Dispatcher.
 // The internal constructor pattern allows for dependency injection of internal components.
-func newDispatcher(workerPool *WorkerPool, taskChan chan Task, resultChan chan Result) *Dispatcher {
+func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan Result) *Dispatcher {
 	log.Debug().Msg("Creating new dispatcher")
 
 	// Input validation
