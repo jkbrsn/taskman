@@ -148,13 +148,6 @@ func (d *Dispatcher) RemoveJob(jobID string) {
 	log.Warn().Msgf("Job with ID '%s' not found, no job was removed", jobID)
 }
 
-// Start starts the Dispatcher.
-// With this design, the Dispatcher manages its own goroutine internally.
-func (d *Dispatcher) Start() {
-	log.Info().Msg("Starting dispatcher")
-	go d.run()
-}
-
 // run runs the Dispatcher.
 // This function is intended to be run as a goroutine.
 func (d *Dispatcher) run() {
