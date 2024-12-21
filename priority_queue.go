@@ -8,6 +8,7 @@ import (
 // priorityQueue implements heap.Interface and holds Jobs.
 type priorityQueue []*Job
 
+// Len returns the length of the heap.
 func (pq priorityQueue) Len() int { return len(pq) }
 
 // Less prioritizes jobs with earlier NextExec times.
@@ -15,6 +16,7 @@ func (pq priorityQueue) Less(i, j int) bool {
 	return pq[i].NextExec.Before(pq[j].NextExec)
 }
 
+// Swap swaps two jobs in the heap.
 func (pq priorityQueue) Swap(i, j int) {
 	pq[i], pq[j] = pq[j], pq[i]
 	pq[i].index = i // Maintain index within the heap.
