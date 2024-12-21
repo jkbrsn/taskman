@@ -3,6 +3,7 @@
 ## to implement
 
 - add helper ReplaceJob which wraps RemoveJob + AddJob
+  - How should this work regarding NextExec? Replace with the same NextExec as the job being replaced?
 - add an option to execute a job directly when inserted and after that at the regular cadence
 - add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
 - dynamic scaleup and scaledown of the number of workers
