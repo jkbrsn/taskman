@@ -55,55 +55,19 @@ type Job struct {
 }
 
 // AddFunc takes a function and adds it to the Dispatcher as a Task.
-func (d *Dispatcher) AddFunc(function func() Result, cadence time.Duration) string {
+// Note: wraps the function in a BasicTask.
+func (d *Dispatcher) AddFunc(function func() Result, cadence time.Duration) (string, error) {
 	task := BasicTask{function}
 	return d.AddTasks([]Task{task}, cadence)
 }
 
-// AddTask adds a Task to the Dispatcher.
-// Note: wrapper to simplify adding single tasks.
-func (d *Dispatcher) AddTask(task Task, cadence time.Duration) string {
-	return d.AddTasks([]Task{task}, cadence)
-}
-
-/*
-AddTasks adds N tasks to the Dispatcher. Tasks must implement the Task interface and
-the input cadence must be greater than 0. The function returns a job ID that can be
-used to remove the job from the Dispatcher.
-*/
-func (d *Dispatcher) AddTasks(tasks []Task, cadence time.Duration) string {
-	// Jobs with cadence <= 0 are ignored, as such a job would execute immediately and continuously
-	// and risk overwhelming the worker pool.
-	if cadence <= 0 {
-		// TODO: return an error?
-		log.Warn().Msgf("Not adding tasks: cadence must be greater than 0 (was %v)", cadence)
-		return ""
-	}
-
-	// Generate a 12 char random ID as the job ID
-	jobID := strings.Split(uuid.New().String(), "-")[0]
-	log.Debug().Msgf("Adding job with %d tasks with group ID '%s' and cadence %v", len(tasks), jobID, cadence)
-
-	// The job uses a copy of the tasks slice, to avoid unintended consequences if the original slice is modified
-	job := &Job{
-		Tasks:    append([]Task(nil), tasks...),
-		Cadence:  cadence,
-		ID:       jobID,
-		NextExec: time.Now().Add(cadence),
-	}
-	d.AddJob(*job)
-	return jobID
-}
-
-/*
-AddJob adds a job to the Dispatcher. A job is a group of tasks that are scheduled
-to execute together. The function returns a job ID that can be used to remove
-the job from the Dispatcher.
-Job requirements:
-- Cadence must be greater than 0
-- Job must have at least one task
-- NextExec must be non-zero
-*/
+// AddJob adds a job to the Dispatcher. A job is a group of tasks that are scheduled
+// to execute together. The function returns a job ID that can be used to remove
+// the job from the Dispatcher.
+// Job requirements:
+// - Cadence must be greater than 0
+// - Job must have at least one task
+// - NextExec must be non-zero
 func (d *Dispatcher) AddJob(job Job) (string, error) {
 	// Validate the job
 	err := validateJob(job)
@@ -145,6 +109,30 @@ func (d *Dispatcher) AddJob(job Job) (string, error) {
 	return job.ID, nil
 }
 
+// AddTask adds a Task to the Dispatcher.
+// Note: wrapper to simplify adding single tasks.
+func (d *Dispatcher) AddTask(task Task, cadence time.Duration) (string, error) {
+	return d.AddTasks([]Task{task}, cadence)
+}
+
+// AddTasks adds N tasks to the Dispatcher. Tasks must implement the Task interface and
+// the input cadence must be greater than 0. The function returns a job ID that can be
+// used to remove the job from the Dispatcher.
+func (d *Dispatcher) AddTasks(tasks []Task, cadence time.Duration) (string, error) {
+	// Generate a 12 char random ID as the job ID
+	jobID := strings.Split(uuid.New().String(), "-")[0]
+	log.Debug().Msgf("Adding job with %d tasks with group ID '%s' and cadence %v", len(tasks), jobID, cadence)
+
+	// The job uses a copy of the tasks slice, to avoid unintended consequences if the original slice is modified
+	job := &Job{
+		Tasks:    append([]Task(nil), tasks...),
+		Cadence:  cadence,
+		ID:       jobID,
+		NextExec: time.Now().Add(cadence),
+	}
+	return d.AddJob(*job)
+}
+
 // RemoveJob removes a job from the Dispatcher.
 func (d *Dispatcher) RemoveJob(jobID string) {
 	d.Lock()
@@ -159,6 +147,34 @@ func (d *Dispatcher) RemoveJob(jobID string) {
 		}
 	}
 	log.Warn().Msgf("Job with ID '%s' not found, no job was removed", jobID)
+}
+
+// Results returns a read-only channel for consuming results.
+func (d *Dispatcher) Results() <-chan Result {
+	return d.resultChan
+}
+
+// Stop signals the Dispatcher to stop processing tasks and exit.
+// Note: blocks until the Dispatcher, including all workers, has completely stopped.
+func (d *Dispatcher) Stop() {
+	log.Debug().Msg("Attempting dispatcher stop")
+	d.stopOnce.Do(func() {
+		// Signal the dispatcher to stop
+		d.cancel()
+
+		// Stop the worker pool
+		d.workerPool.Stop()
+		// Note: resultChan is closed by workerPool.Stop()
+
+		// Wait for the run loop to exit
+		<-d.runDone
+
+		// Close the remaining channels
+		close(d.taskChan)
+		close(d.newTaskChan)
+
+		log.Debug().Msg("Dispatcher stopped")
+	})
 }
 
 // run runs the Dispatcher.
@@ -239,34 +255,6 @@ func validateJob(job Job) error {
 		return ErrZeroNextExec
 	}
 	return nil
-}
-
-// Results returns a read-only channel for consuming results.
-func (d *Dispatcher) Results() <-chan Result {
-	return d.resultChan
-}
-
-// Stop signals the Dispatcher to stop processing tasks and exit.
-// Note: blocks until the Dispatcher, including all workers, has completely stopped.
-func (d *Dispatcher) Stop() {
-	log.Debug().Msg("Attempting dispatcher stop")
-	d.stopOnce.Do(func() {
-		// Signal the dispatcher to stop
-		d.cancel()
-
-		// Stop the worker pool
-		d.workerPool.Stop()
-		// Note: resultChan is closed by workerPool.Stop()
-
-		// Wait for the run loop to exit
-		<-d.runDone
-
-		// Close the remaining channels
-		close(d.taskChan)
-		close(d.newTaskChan)
-
-		log.Debug().Msg("Dispatcher stopped")
-	})
 }
 
 // NewDispatcher creates, starts and returns a new Dispatcher.

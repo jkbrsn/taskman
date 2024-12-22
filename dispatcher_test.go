@@ -102,7 +102,10 @@ func TestAddFunc(t *testing.T) {
 		return Result{Success: true}
 	}
 	cadence := 100 * time.Millisecond
-	jobID := dispatcher.AddFunc(function, cadence)
+	jobID, err := dispatcher.AddFunc(function, cadence)
+	if err != nil {
+		t.Fatalf("Error adding function: %v", err)
+	}
 
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
 
@@ -116,7 +119,10 @@ func TestAddTask(t *testing.T) {
 	defer dispatcher.Stop()
 
 	testTask := MockTask{ID: "test-task", cadence: 100 * time.Millisecond}
-	jobID := dispatcher.AddTask(testTask, testTask.cadence)
+	jobID, err := dispatcher.AddTask(testTask, testTask.cadence)
+	if err != nil {
+		t.Fatalf("Error adding task: %v", err)
+	}
 
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
 
@@ -139,7 +145,10 @@ func TestAddTasks(t *testing.T) {
 	for i, task := range mockTasks {
 		tasks[i] = task
 	}
-	jobID := dispatcher.AddTasks(tasks, 100*time.Millisecond)
+	jobID, err := dispatcher.AddTasks(tasks, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Error adding tasks: %v", err)
+	}
 
 	// Assert that the job was added
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
@@ -161,7 +170,12 @@ func TestAddJob(t *testing.T) {
 	for i, task := range mockTasks {
 		tasks[i] = task
 	}
-	job := Job{ID: "test-job", Cadence: 100 * time.Millisecond, Tasks: tasks}
+	job := Job{
+		Cadence:  100 * time.Millisecond,
+		ID:       "test-job",
+		NextExec: time.Now().Add(100 * time.Millisecond),
+		Tasks:    tasks,
+	}
 	jobID, err := dispatcher.AddJob(job)
 	if err != nil {
 		t.Fatalf("Error adding job: %v", err)
@@ -187,7 +201,10 @@ func TestRemoveJob(t *testing.T) {
 	for i, task := range mockTasks {
 		tasks[i] = task
 	}
-	jobID := dispatcher.AddTasks(tasks, 100*time.Millisecond)
+	jobID, err := dispatcher.AddTasks(tasks, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Error adding job: %v", err)
+	}
 
 	// Assert that the job was added
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
