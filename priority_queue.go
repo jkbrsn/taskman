@@ -6,6 +6,7 @@ import (
 )
 
 // priorityQueue implements heap.Interface and holds Jobs.
+// Priority is determined by the NextExec time of the Job.
 type priorityQueue []*Job
 
 // Len returns the length of the heap.
