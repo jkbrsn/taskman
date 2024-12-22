@@ -54,11 +54,17 @@ type Job struct {
 	index int // Index within the heap
 }
 
-// AddFunc takes a function and adds it to the Dispatcher as a Task.
+// AddFunc takes a function and adds it to the Dispatcher in a Job.
 // Note: wraps the function in a BasicTask.
 func (d *Dispatcher) AddFunc(function func() Result, cadence time.Duration) (string, error) {
 	task := BasicTask{function}
-	return d.AddTasks([]Task{task}, cadence)
+	job := Job{
+		Tasks:    []Task{task},
+		Cadence:  cadence,
+		ID:       strings.Split(uuid.New().String(), "-")[0],
+		NextExec: time.Now().Add(cadence),
+	}
+	return d.AddJob(job)
 }
 
 // AddJob adds a job to the Dispatcher. A job is a group of tasks that are scheduled
@@ -109,10 +115,16 @@ func (d *Dispatcher) AddJob(job Job) (string, error) {
 	return job.ID, nil
 }
 
-// AddTask adds a Task to the Dispatcher.
+// AddTask takes a Task and adds it to the Dispatcher in a Job.
 // Note: wrapper to simplify adding single tasks.
 func (d *Dispatcher) AddTask(task Task, cadence time.Duration) (string, error) {
-	return d.AddTasks([]Task{task}, cadence)
+	job := Job{
+		Tasks:    []Task{task},
+		Cadence:  cadence,
+		ID:       strings.Split(uuid.New().String(), "-")[0],
+		NextExec: time.Now().Add(cadence),
+	}
+	return d.AddJob(job)
 }
 
 // AddTasks adds N tasks to the Dispatcher. Tasks must implement the Task interface and
