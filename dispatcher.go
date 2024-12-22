@@ -55,6 +55,7 @@ type Job struct {
 }
 
 // AddFunc takes a function and adds it to the Dispatcher in a Job.
+// Returns the resultings job's ID.
 // Note: wraps the function in a BasicTask.
 func (d *Dispatcher) AddFunc(function func() Result, cadence time.Duration) (string, error) {
 	task := BasicTask{function}
@@ -74,7 +75,9 @@ func (d *Dispatcher) AddFunc(function func() Result, cadence time.Duration) (str
 // - Cadence must be greater than 0
 // - Job must have at least one task
 // - NextExec must be non-zero
+// - Job must have an ID, unique within the Dispatcher
 func (d *Dispatcher) AddJob(job Job) (string, error) {
+	// TODO: make the validation also check if the ID is already in use
 	// Validate the job
 	err := validateJob(job)
 	if err != nil {
@@ -116,7 +119,7 @@ func (d *Dispatcher) AddJob(job Job) (string, error) {
 }
 
 // AddTask takes a Task and adds it to the Dispatcher in a Job.
-// Note: wrapper to simplify adding single tasks.
+// Returns the resultings job's ID.
 func (d *Dispatcher) AddTask(task Task, cadence time.Duration) (string, error) {
 	job := Job{
 		Tasks:    []Task{task},
@@ -127,9 +130,8 @@ func (d *Dispatcher) AddTask(task Task, cadence time.Duration) (string, error) {
 	return d.AddJob(job)
 }
 
-// AddTasks adds N tasks to the Dispatcher. Tasks must implement the Task interface and
-// the input cadence must be greater than 0. The function returns a job ID that can be
-// used to remove the job from the Dispatcher.
+// AddTasks takes a slice of Task and adds them to the Dispatcher in a Job.
+// Returns the resultings job's ID.
 func (d *Dispatcher) AddTasks(tasks []Task, cadence time.Duration) (string, error) {
 	// Generate a 12 char random ID as the job ID
 	jobID := strings.Split(uuid.New().String(), "-")[0]
