@@ -162,7 +162,10 @@ func TestAddJob(t *testing.T) {
 		tasks[i] = task
 	}
 	job := Job{ID: "test-job", Cadence: 100 * time.Millisecond, Tasks: tasks}
-	jobID := dispatcher.AddJob(job)
+	jobID, err := dispatcher.AddJob(job)
+	if err != nil {
+		t.Fatalf("Error adding job: %v", err)
+	}
 
 	// Assert that the job was added
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
@@ -398,6 +401,45 @@ func TestConcurrentAddTask(t *testing.T) {
 	assert.Equal(t, expectedTasks, dispatcher.jobQueue.Len(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobQueue.Len())
 }
 
+func TestConcurrentAddJob(t *testing.T) {
+	// Deactivate debug logs for this test
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.999"}).Level(zerolog.InfoLevel)
+
+	dispatcher := NewDispatcher(10, 1, 1)
+	defer dispatcher.Stop()
+
+	var wg sync.WaitGroup
+	numGoroutines := 20
+	numTasksPerGoroutine := 100
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < numTasksPerGoroutine; j++ {
+				jobID := fmt.Sprintf("task-%d-%d", id, j)
+				cadence := 200 * time.Millisecond
+				job := Job{
+					ID:       jobID,
+					Cadence:  cadence,
+					NextExec: time.Now().Add(cadence),
+					Tasks:    []Task{MockTask{ID: jobID, cadence: 100 * time.Millisecond}},
+				}
+				_, err := dispatcher.AddJob(job)
+				if err != nil {
+					log.Error().Err(err).Msg("Error adding job")
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify that all tasks are scheduled
+	expectedTasks := numGoroutines * numTasksPerGoroutine
+	assert.Equal(t, expectedTasks, dispatcher.jobQueue.Len(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobQueue.Len())
+}
+
 func TestZeroCadenceTask(t *testing.T) {
 	dispatcher := NewDispatcher(10, 1, 1)
 	defer dispatcher.Stop()
@@ -417,4 +459,46 @@ func TestZeroCadenceTask(t *testing.T) {
 		// After 50ms, the task would have executed if it was scheduled
 		log.Debug().Msg("Task with zero cadence never executed")
 	}
+}
+
+func TestValidateJob(t *testing.T) {
+	// Test case: valid job
+	validJob := Job{
+		ID:       "valid-job",
+		Cadence:  100 * time.Millisecond,
+		NextExec: time.Now().Add(100 * time.Millisecond),
+		Tasks:    []Task{MockTask{ID: "task1"}},
+	}
+	err := validateJob(validJob)
+	assert.NoError(t, err, "Expected no error for valid job")
+
+	// Test case: invalid job with zero cadence
+	invalidJobZeroCadence := Job{
+		ID:       "invalid-job-zero-cadence",
+		Cadence:  0,
+		NextExec: time.Now().Add(100 * time.Millisecond),
+		Tasks:    []Task{MockTask{ID: "task1"}},
+	}
+	err = validateJob(invalidJobZeroCadence)
+	assert.Equal(t, ErrInvalidCadence, err, "Expected ErrInvalidCadence for job with zero cadence")
+
+	// Test case: invalid job with no tasks
+	invalidJobNoTasks := Job{
+		ID:       "invalid-job-no-tasks",
+		Cadence:  100 * time.Millisecond,
+		NextExec: time.Now().Add(100 * time.Millisecond),
+		Tasks:    []Task{},
+	}
+	err = validateJob(invalidJobNoTasks)
+	assert.Equal(t, ErrNoTasks, err, "Expected ErrNoTasks for job with no tasks")
+
+	// Test case: invalid job with zero NextExec time
+	invalidJobZeroNextExec := Job{
+		ID:       "invalid-job-zero-next-exec",
+		Cadence:  100 * time.Millisecond,
+		NextExec: time.Time{},
+		Tasks:    []Task{MockTask{ID: "task1"}},
+	}
+	err = validateJob(invalidJobZeroNextExec)
+	assert.Equal(t, ErrZeroNextExec, err, "Expected ErrZeroNextExec for job with zero NextExec time")
 }

@@ -3,12 +3,24 @@ package taskman
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
+)
+
+var (
+	// ErrDispatcherStopped is returned when a task is added to a stopped dispatcher.
+	ErrDispatcherStopped = errors.New("dispatcher is stopped")
+	// ErrInvalidCadence is returned when a job has an invalid cadence.
+	ErrInvalidCadence = errors.New("job cadence must be greater than 0")
+	// ErrNoTasks is returned when a job has no tasks.
+	ErrNoTasks = errors.New("job has no tasks")
+	// ErrZeroNextExec is returned when a job has a zero NextExec time.
+	ErrZeroNextExec = errors.New("job NextExec time must be non-zero")
 )
 
 // Dispatcher manages task scheduling and execution.
@@ -85,17 +97,18 @@ func (d *Dispatcher) AddTasks(tasks []Task, cadence time.Duration) string {
 
 /*
 AddJob adds a job to the Dispatcher. A job is a group of tasks that are scheduled
-to execute together. Tasks must implement the Task interface and the input cadence
-must be greater than 0. The function returns a job ID that can be used to remove
+to execute together. The function returns a job ID that can be used to remove
 the job from the Dispatcher.
+Job requirements:
+- Cadence must be greater than 0
+- Job must have at least one task
+- NextExec must be non-zero
 */
-func (d *Dispatcher) AddJob(job Job) string {
-	// Jobs with cadence <= 0 are ignored, as such a job would execute immediately and continuously
-	// and risk overwhelming the worker pool.
-	if job.Cadence <= 0 {
-		// TODO: return an error?
-		log.Warn().Msgf("Not adding job: cadence must be greater than 0 (was %v)", job.Cadence)
-		return ""
+func (d *Dispatcher) AddJob(job Job) (string, error) {
+	// Validate the job
+	err := validateJob(job)
+	if err != nil {
+		return "", err
 	}
 	log.Debug().Msgf("Adding job with %d tasks with group ID '%s' and cadence %v", len(job.Tasks), job.ID, job.Cadence)
 
@@ -103,9 +116,8 @@ func (d *Dispatcher) AddJob(job Job) string {
 	select {
 	case <-d.ctx.Done():
 		// If the dispatcher is stopped, do not continue adding the job
-		// TODO: return an error?
 		log.Debug().Msg("Dispatcher is stopped, not adding job")
-		return ""
+		return "", ErrDispatcherStopped
 	default:
 		// Do nothing if the dispatcher isn't stopped
 	}
@@ -128,8 +140,9 @@ func (d *Dispatcher) AddJob(job Job) string {
 			// Do nothing if no one is listening
 		}
 	}
+
 	// TODO: return ID, or something else?
-	return job.ID
+	return job.ID, nil
 }
 
 // RemoveJob removes a job from the Dispatcher.
@@ -207,6 +220,25 @@ func (d *Dispatcher) run() {
 			}
 		}
 	}
+}
+
+// validateJob validates a Job.
+func validateJob(job Job) error {
+	// Jobs with cadence <= 0 are invalid, as such jobs would execute immediately and continuously
+	// and risk overwhelming the worker pool.
+	if job.Cadence <= 0 {
+		return ErrInvalidCadence
+	}
+	// Jobs with no tasks are invalid, as they would not do anything.
+	if len(job.Tasks) == 0 {
+		return ErrNoTasks
+	}
+	// Jobs with a zero NextExec time are invalid, as they would execute immediately.
+	// TODO: revisit if immediate execution support is added
+	if job.NextExec.IsZero() {
+		return ErrZeroNextExec
+	}
+	return nil
 }
 
 // Results returns a read-only channel for consuming results.
