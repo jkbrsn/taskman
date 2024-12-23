@@ -47,9 +47,9 @@ type Dispatcher struct {
 
 // Job describes when to execute a specific group of tasks.
 type Job struct {
-	Tasks []Task
+	Cadence time.Duration
+	Tasks   []Task
 
-	Cadence  time.Duration
 	ID       string
 	NextExec time.Time
 
@@ -155,6 +155,23 @@ func (d *Dispatcher) RemoveJob(jobID string) error {
 	defer d.Unlock()
 
 	return d.jobQueue.RemoveByID(jobID)
+}
+
+// ReplaceJob replaces a job in the Dispatcher's queue with a new job, based on
+// their ID:s matching. The new job's NextExec will be overwritten by the old
+// job's, to preserve the priority queue order.
+// TODO: test
+func (d *Dispatcher) ReplaceJob(newJob Job) error {
+	jobIndex, err := d.jobQueue.JobInQueue(newJob.ID)
+	if err != nil {
+		return ErrJobNotFound
+	}
+	log.Debug().Msgf("Replacing job with ID: %s", newJob.ID)
+	oldJob := d.jobQueue[jobIndex]
+	newJob.NextExec = oldJob.NextExec
+	newJob.index = oldJob.index
+	d.jobQueue[jobIndex] = &newJob
+	return nil
 }
 
 // Results returns a read-only channel for consuming results.

@@ -9,6 +9,8 @@ import (
 // Priority is determined by the NextExec time of the Job.
 type priorityQueue []*Job
 
+// Interface implementation
+
 // Len returns the length of the heap.
 func (pq priorityQueue) Len() int { return len(pq) }
 
@@ -42,10 +44,17 @@ func (pq *priorityQueue) Pop() interface{} {
 	return job
 }
 
-// Update modifies the NextExec of a job in the heap.
-func (pq *priorityQueue) Update(job *Job, nextExec time.Time) {
-	job.NextExec = nextExec
-	heap.Fix(pq, job.index)
+// Custom functionality
+
+// JobInQueue finds whether a job with the jobID is currently in the queue,
+// returns the job's index if found.
+func (pq *priorityQueue) JobInQueue(jobID string) (int, error) {
+	for _, job := range *pq {
+		if job.ID == jobID {
+			return job.index, nil
+		}
+	}
+	return 0, ErrJobNotFound
 }
 
 // Peek returns the job with the earliest NextExec time.
@@ -60,7 +69,6 @@ func (pq *priorityQueue) Peek() *Job {
 // RemoveByID finds a job in the priorityQueue by ID, and removes it if found.
 // TODO: test
 func (pq *priorityQueue) RemoveByID(jobID string) error {
-	// Find the job in the heap and
 	for i, job := range *pq {
 		if job.ID == jobID {
 			heap.Remove(pq, i)
@@ -68,4 +76,11 @@ func (pq *priorityQueue) RemoveByID(jobID string) error {
 		}
 	}
 	return ErrJobNotFound
+}
+
+// Update modifies the NextExec of a job in the heap.
+// TODO: test
+func (pq *priorityQueue) Update(job *Job, nextExec time.Time) {
+	job.NextExec = nextExec
+	heap.Fix(pq, job.index)
 }
