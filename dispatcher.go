@@ -17,6 +17,8 @@ var (
 	ErrDispatcherStopped = errors.New("dispatcher is stopped")
 	// ErrInvalidCadence is returned when a job has an invalid cadence.
 	ErrInvalidCadence = errors.New("job cadence must be greater than 0")
+	// ErrJobNotFound is returned when a job is not found.
+	ErrJobNotFound = errors.New("job not found")
 	// ErrNoTasks is returned when a job has no tasks.
 	ErrNoTasks = errors.New("job has no tasks")
 	// ErrZeroNextExec is returned when a job has a zero NextExec time.
@@ -148,19 +150,11 @@ func (d *Dispatcher) AddTasks(tasks []Task, cadence time.Duration) (string, erro
 }
 
 // RemoveJob removes a job from the Dispatcher.
-func (d *Dispatcher) RemoveJob(jobID string) {
+func (d *Dispatcher) RemoveJob(jobID string) error {
 	d.Lock()
 	defer d.Unlock()
 
-	// Find the job in the heap and remove it
-	for i, job := range d.jobQueue {
-		if job.ID == jobID {
-			log.Debug().Msgf("Removing job with ID '%s'", jobID)
-			heap.Remove(&d.jobQueue, i)
-			break
-		}
-	}
-	log.Warn().Msgf("Job with ID '%s' not found, no job was removed", jobID)
+	return d.jobQueue.RemoveByID(jobID)
 }
 
 // Results returns a read-only channel for consuming results.

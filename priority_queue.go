@@ -57,8 +57,15 @@ func (pq *priorityQueue) Peek() *Job {
 	return (*pq)[0]
 }
 
-// Remove removes a job from the heap.
+// RemoveByID finds a job in the priorityQueue by ID, and removes it if found.
 // TODO: test
-func (pq *priorityQueue) Remove(job *Job) {
-	heap.Remove(pq, job.index)
+func (pq *priorityQueue) RemoveByID(jobID string) error {
+	// Find the job in the heap and
+	for i, job := range *pq {
+		if job.ID == jobID {
+			heap.Remove(pq, i)
+			return nil
+		}
+	}
+	return ErrJobNotFound
 }

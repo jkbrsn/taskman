@@ -202,9 +202,7 @@ func TestRemoveJob(t *testing.T) {
 		tasks[i] = task
 	}
 	jobID, err := dispatcher.AddTasks(tasks, 100*time.Millisecond)
-	if err != nil {
-		t.Fatalf("Error adding job: %v", err)
-	}
+	assert.Nil(t, err, "Error adding job")
 
 	// Assert that the job was added
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
@@ -213,10 +211,15 @@ func TestRemoveJob(t *testing.T) {
 	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
 
 	// Remove the job
-	dispatcher.RemoveJob(jobID)
+	err = dispatcher.RemoveJob(jobID)
+	assert.Nil(t, err, "Error removing job")
 
 	// Assert that the job was removed
 	assert.Equal(t, 0, dispatcher.jobQueue.Len(), "Expected job queue length to be 0, got %d", dispatcher.jobQueue.Len())
+
+	// Try removing the job once more
+	err = dispatcher.RemoveJob(jobID)
+	assert.Equal(t, ErrJobNotFound, err, "Expected removal of non-existent job to produce ErrJobNotFound")
 }
 
 func TestTaskExecution(t *testing.T) {
