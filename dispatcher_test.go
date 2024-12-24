@@ -181,21 +181,7 @@ func TestAddJob(t *testing.T) {
 	dispatcher := NewDispatcher(10, 2, 1)
 	defer dispatcher.Stop()
 
-	mockTasks := []MockTask{
-		{ID: "task1", cadence: 100 * time.Millisecond},
-		{ID: "task2", cadence: 100 * time.Millisecond},
-	}
-	// Explicitly convert []MockTask to []Task to satisfy the Job struct
-	tasks := make([]Task, len(mockTasks))
-	for i, task := range mockTasks {
-		tasks[i] = task
-	}
-	job := Job{
-		Cadence:  100 * time.Millisecond,
-		ID:       "test-job",
-		NextExec: time.Now().Add(100 * time.Millisecond),
-		Tasks:    tasks,
-	}
+	job := getMockedJob(2, "test-job", 100*time.Millisecond)
 	jobID, err := dispatcher.AddJob(job)
 	if err != nil {
 		t.Fatalf("Error adding job: %v", err)
@@ -212,23 +198,15 @@ func TestRemoveJob(t *testing.T) {
 	dispatcher := NewDispatcher(10, 2, 1)
 	defer dispatcher.Stop()
 
-	mockTasks := []MockTask{
-		{ID: "task1", cadence: 100 * time.Millisecond},
-		{ID: "task2", cadence: 100 * time.Millisecond},
-	}
-	// Explicitly convert []MockTask to []Task to satisfy the AddTasks method signature, since slices are not covariant in Go
-	tasks := make([]Task, len(mockTasks))
-	for i, task := range mockTasks {
-		tasks[i] = task
-	}
-	jobID, err := dispatcher.AddTasks(tasks, 100*time.Millisecond)
+	job := getMockedJob(2, "someJob", 100*time.Millisecond)
+	jobID, err := dispatcher.AddJob(job)
 	assert.Nil(t, err, "Error adding job")
 
 	// Assert that the job was added
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
-	job := dispatcher.jobQueue[0]
-	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
-	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
+	qJob := dispatcher.jobQueue[0]
+	assert.Equal(t, jobID, qJob.ID, "Expected job ID to be %s, got %s", jobID, qJob.ID)
+	assert.Equal(t, 2, len(qJob.Tasks), "Expected job to have 2 tasks, got %d", len(qJob.Tasks))
 
 	// Remove the job
 	err = dispatcher.RemoveJob(jobID)
@@ -487,13 +465,7 @@ func TestConcurrentAddJob(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < numTasksPerGoroutine; j++ {
 				jobID := fmt.Sprintf("task-%d-%d", id, j)
-				cadence := 200 * time.Millisecond
-				job := Job{
-					ID:       jobID,
-					Cadence:  cadence,
-					NextExec: time.Now().Add(cadence),
-					Tasks:    []Task{MockTask{ID: jobID, cadence: 100 * time.Millisecond}},
-				}
+				job := getMockedJob(1, jobID, 200*time.Millisecond)
 				_, err := dispatcher.AddJob(job)
 				if err != nil {
 					log.Error().Err(err).Msg("Error adding job")
