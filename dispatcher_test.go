@@ -40,6 +40,26 @@ func getChannelBufferSize(ch interface{}) int {
 	}
 }
 
+// Helper function to get a Job with mocked tasks.
+func getMockedJob(nTasks int, jobID string, cadence time.Duration) Job {
+	var mockTasks []MockTask
+	for i := 0; i < nTasks; i++ {
+		mockTasks = append(mockTasks, MockTask{ID: fmt.Sprintf("task-%d", i), cadence: cadence})
+	}
+	// Explicitly convert []MockTask to []Task to satisfy the Job struct
+	tasks := make([]Task, len(mockTasks))
+	for i, task := range mockTasks {
+		tasks[i] = task
+	}
+	job := Job{
+		Cadence:  cadence,
+		ID:       jobID,
+		NextExec: time.Now().Add(100 * time.Millisecond),
+		Tasks:    tasks,
+	}
+	return job
+}
+
 // TODO: write test comparing what happens when different channel types are used for taskChan
 
 func TestMain(m *testing.M) {
@@ -220,6 +240,35 @@ func TestRemoveJob(t *testing.T) {
 	// Try removing the job once more
 	err = dispatcher.RemoveJob(jobID)
 	assert.Equal(t, ErrJobNotFound, err, "Expected removal of non-existent job to produce ErrJobNotFound")
+}
+
+func TestReplaceJob(t *testing.T) {
+	dispatcher := NewDispatcher(4, 4, 4)
+	defer dispatcher.Stop()
+
+	// Add a job
+	firstJob := getMockedJob(2, "aJobID", 25*time.Millisecond)
+	_, err := dispatcher.AddJob(firstJob)
+	assert.Nil(t, err, "Error adding job")
+	// Assert job added
+	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	qJob := dispatcher.jobQueue[0]
+	assert.Equal(t, firstJob.ID, qJob.ID, "Expected ID to be '%s', got '%s'", firstJob.ID, qJob.ID)
+
+	// Replace the first job
+	secondJob := getMockedJob(4, "aJobID", 50*time.Millisecond)
+	err = dispatcher.ReplaceJob(secondJob)
+	assert.Nil(t, err, "Error replacing job")
+	// Assert that the job was replaced
+	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	qJob = dispatcher.jobQueue[0]
+	assert.Equal(t, secondJob.ID, qJob.ID, "Expected ID to be '%s', got '%s'", secondJob.ID, qJob.ID)
+	assert.Equal(t, len(secondJob.Tasks), len(qJob.Tasks), "Expected job to have %d tasks, got %d", len(secondJob.Tasks), len(qJob.Tasks))
+
+	// Try to replace a non-existing job
+	thirdJob := getMockedJob(2, "anotherJobID", 10*time.Millisecond)
+	err = dispatcher.ReplaceJob(thirdJob)
+	assert.Equal(t, ErrJobNotFound, err, "Expected replace attempt of non-existent job to produce ErrJobNotFound")
 }
 
 func TestTaskExecution(t *testing.T) {
