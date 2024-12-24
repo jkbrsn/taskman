@@ -162,6 +162,9 @@ func (d *Dispatcher) RemoveJob(jobID string) error {
 // job's, to preserve the priority queue order.
 // TODO: test
 func (d *Dispatcher) ReplaceJob(newJob Job) error {
+	d.Lock()
+	defer d.Unlock()
+
 	jobIndex, err := d.jobQueue.JobInQueue(newJob.ID)
 	if err != nil {
 		return ErrJobNotFound
