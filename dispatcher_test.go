@@ -225,7 +225,7 @@ func TestReplaceJob(t *testing.T) {
 	defer dispatcher.Stop()
 
 	// Add a job
-	firstJob := getMockedJob(2, "aJobID", 25*time.Millisecond)
+	firstJob := getMockedJob(2, "aJobID", 100*time.Millisecond)
 	_, err := dispatcher.AddJob(firstJob)
 	assert.Nil(t, err, "Error adding job")
 	// Assert job added
@@ -237,10 +237,15 @@ func TestReplaceJob(t *testing.T) {
 	secondJob := getMockedJob(4, "aJobID", 50*time.Millisecond)
 	err = dispatcher.ReplaceJob(secondJob)
 	assert.Nil(t, err, "Error replacing job")
-	// Assert that the job was replaced
+	// Assert that the job was replaced in the queue
 	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
 	qJob = dispatcher.jobQueue[0]
+	// The queue job should retain the index and NextExec time of the first job
+	assert.Equal(t, firstJob.index, qJob.index, "Expected index to be '%s', got '%s'", secondJob.index, qJob.index)
+	assert.Equal(t, firstJob.NextExec, qJob.NextExec, "Expected ID to be '%s', got '%s'", secondJob.NextExec, qJob.NextExec)
+	// The queue job should have the ID, cadence and tasks of the new (second) job
 	assert.Equal(t, secondJob.ID, qJob.ID, "Expected ID to be '%s', got '%s'", secondJob.ID, qJob.ID)
+	assert.Equal(t, secondJob.Cadence, qJob.Cadence, "Expected cadence to be '%s', got '%s'", secondJob.Cadence, qJob.Cadence)
 	assert.Equal(t, len(secondJob.Tasks), len(qJob.Tasks), "Expected job to have %d tasks, got %d", len(secondJob.Tasks), len(qJob.Tasks))
 
 	// Try to replace a non-existing job

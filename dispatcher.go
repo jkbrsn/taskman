@@ -159,8 +159,7 @@ func (d *Dispatcher) RemoveJob(jobID string) error {
 
 // ReplaceJob replaces a job in the Dispatcher's queue with a new job, based on
 // their ID:s matching. The new job's NextExec will be overwritten by the old
-// job's, to preserve the priority queue order.
-// TODO: test
+// job's, to preserve the Dispatcher's schedule.
 func (d *Dispatcher) ReplaceJob(newJob Job) error {
 	d.Lock()
 	defer d.Unlock()
