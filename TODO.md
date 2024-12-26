@@ -10,8 +10,9 @@
 - resultChan
   - move resultChan close to the dispatcher, but add a signal from the worker pool to let the dispatcher know it's done closing workers
   - OR remove it entirely, let Execute return error, let the user handle results and errors
-- worker pool
-  - tests for worker_pool.go
+- tests
+  - add unit tests for worker_pool.go
+  - add unit tests for priority_queue.go
 - better readme
 
 # feature ideas
