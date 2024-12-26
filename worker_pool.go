@@ -33,8 +33,6 @@ func (wp *workerPool) startWorker(id int) {
 			}
 			log.Debug().Msgf("Worker %d executing task", id)
 			wp.workersActive.Add(1) // Increment active workers
-			// TODO: consider processing the task in a separate goroutine, e.g. async task execution within a single worker
-			// TODO cont.: this would allow the worker to continue processing tasks while waiting for the result
 			result := task.Execute()
 			if result.Error != nil {
 				// No retry policy is implemented, we just log the error for now
@@ -57,6 +55,7 @@ func (wp *workerPool) activeWorkers() int32 {
 }
 
 // start starts the worker pool, creating workers according to wp.WorkerCount.
+// TODO: consider shielding this method from multiple calls using a sync.Once
 func (wp *workerPool) start() {
 	log.Info().Msgf("Starting worker pool with %d workers", wp.workersTotal)
 	wp.wg.Add(wp.workersTotal)

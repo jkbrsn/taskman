@@ -2,7 +2,6 @@
 
 ## to do before 0.1.0
 
-- dynamic scaleup and scaledown of the number of workers
 - resultChan
   - move resultChan close to the dispatcher, but add a signal from the worker pool to let the dispatcher know it's done closing workers
   - OR remove it entirely, let Execute return error, let the user handle results and errors
@@ -13,6 +12,11 @@
 
 ## to do later
 
+- dynamic scaleup and scaledown of the number of workers
+  - add a dispatcher method to calculate a recommended worker count based on the job queue, taking into account the "widest" jobs and job frequency
+    - the pool should probably hold at least 2 x the number of workers needed to handle the widest job, but look up a formula to calculate this
+  - add a method to add workers to the pool post start
+  - add a method to remove workers from the pool
 - add an option to execute a job directly when inserted and after that at the regular cadence
 - add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
 - add an option to instantly execute a job in the queue, even though it has some time until next execution
