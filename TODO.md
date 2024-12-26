@@ -3,8 +3,8 @@
 ## to do before 0.1.0
 
 - resultChan
-  - move resultChan close to the dispatcher, but add a signal from the worker pool to let the dispatcher know it's done closing workers
-  - OR remove it entirely, let Execute return error, let the user handle results and errors
+  - then, exchange it for an errorChan, which will be used to signal errors from the worker pool to the dispatcher
+  - finally, make the Dispatcher automtically consume the errorChan (and log errors?) unless a function á la "SetErrorHandler" is called
 - better readme
 
 ## to do later

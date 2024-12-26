@@ -42,7 +42,33 @@ type Dispatcher struct {
 
 	stopOnce sync.Once
 
-	workerPool *workerPool
+	workerPool     *workerPool
+	workerPoolDone chan struct{} // Channel to receive signal that the worker pool has stopped
+}
+
+// Result represents the result of a task execution.
+// TODO: remove
+type Result struct {
+	Data    map[string]interface{}
+	Error   error
+	Success bool
+}
+
+// Task is an interface for tasks that can be executed.
+// TODO: consider adding a context.Context parameter to Execute, to handle timeouts and cancellation (can also be forcefully added in the worker)
+type Task interface {
+	Execute() Result
+}
+
+// BasicTask is a task that executes a function.
+type BasicTask struct {
+	Function func() Result
+}
+
+// Execure executes the function and returns the result.
+func (f BasicTask) Execute() Result {
+	result := f.Function()
+	return result
 }
 
 // Job describes when to execute a specific group of tasks.
@@ -193,12 +219,14 @@ func (d *Dispatcher) Stop() {
 		d.workerPool.stop()
 		// Note: resultChan is closed by workerPool.Stop()
 
-		// Wait for the run loop to exit
+		// Wait for the run loop to exit, and the worker pool to stop
 		<-d.runDone
+		<-d.workerPoolDone
 
 		// Close the remaining channels
-		close(d.taskChan)
 		close(d.newTaskChan)
+		close(d.resultChan)
+		close(d.taskChan)
 
 		log.Debug().Msg("Dispatcher stopped")
 	})
@@ -288,14 +316,15 @@ func validateJob(job Job) error {
 func NewDispatcher(workerCount, taskBufferSize, resultBufferSize int) *Dispatcher {
 	resultChan := make(chan Result, resultBufferSize)
 	taskChan := make(chan Task, taskBufferSize)
-	workerPool := newWorkerPool(workerCount, resultChan, taskChan)
-	s := newDispatcher(workerPool, taskChan, resultChan)
+	workerPoolDone := make(chan struct{})
+	workerPool := newWorkerPool(workerCount, resultChan, taskChan, workerPoolDone)
+	s := newDispatcher(workerPool, taskChan, resultChan, workerPoolDone)
 	return s
 }
 
 // newDispatcher creates a new Dispatcher.
 // The internal constructor pattern allows for dependency injection of internal components.
-func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan Result) *Dispatcher {
+func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan Result, workerPoolDone chan struct{}) *Dispatcher {
 	log.Debug().Msg("Creating new dispatcher")
 
 	// Input validation
@@ -312,14 +341,15 @@ func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan R
 	ctx, cancel := context.WithCancel(context.Background())
 
 	d := &Dispatcher{
-		ctx:         ctx,
-		cancel:      cancel,
-		jobQueue:    make(priorityQueue, 0),
-		newTaskChan: make(chan bool, 1),
-		resultChan:  resultChan,
-		runDone:     make(chan struct{}),
-		taskChan:    taskChan,
-		workerPool:  workerPool,
+		ctx:            ctx,
+		cancel:         cancel,
+		jobQueue:       make(priorityQueue, 0),
+		newTaskChan:    make(chan bool, 1),
+		resultChan:     resultChan,
+		runDone:        make(chan struct{}),
+		taskChan:       taskChan,
+		workerPool:     workerPool,
+		workerPoolDone: workerPoolDone,
 	}
 
 	heap.Init(&d.jobQueue)

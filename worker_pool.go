@@ -14,9 +14,10 @@ type workerPool struct {
 	workersTotal   int          // Total number of workers in the pool
 
 	// TODO: do a lookover for channel directions
-	resultChan chan<- Result // Send-only channel for results
-	stopChan   chan struct{} // Channel to signal stopping the worker pool
-	taskChan   <-chan Task   // Receive-only channel for tasks
+	resultChan     chan<- Result // Send-only channel for results
+	stopChan       chan struct{} // Channel to signal stopping the worker pool
+	taskChan       <-chan Task   // Receive-only channel for tasks
+	workerPoolDone chan struct{} // Channel to signal worker pool is done
 
 	wg sync.WaitGroup
 }
@@ -82,14 +83,15 @@ func (wp *workerPool) stop() {
 	log.Debug().Msg("Waiting for workers to finish")
 	wp.wg.Wait() // Wait for all workers to finish
 	log.Debug().Msg("Worker pool stopped")
-	close(wp.resultChan)
+	close(wp.workerPoolDone) // Signal worker pool is done
 }
 
-func newWorkerPool(workersTotal int, resultChan chan Result, taskChan chan Task) *workerPool {
+func newWorkerPool(workersTotal int, resultChan chan Result, taskChan chan Task, workerPoolDone chan struct{}) *workerPool {
 	return &workerPool{
-		workersTotal: workersTotal,
-		resultChan:   resultChan,
-		stopChan:     make(chan struct{}),
-		taskChan:     taskChan,
+		resultChan:     resultChan,
+		stopChan:       make(chan struct{}),
+		taskChan:       taskChan,
+		workerPoolDone: workerPoolDone,
+		workersTotal:   workersTotal,
 	}
 }
