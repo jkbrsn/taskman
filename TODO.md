@@ -3,7 +3,7 @@
 ## to implement
 
 - add an option to instantly execute a job in the queue, even though it has some time until next execution
-  - use heap.Fix to reposition the job in the heap
+  - use heap.Fix to reposition the job in the heap, https://cs.opensource.google/go/go/+/refs/tags/go1.23.4:src/container/heap/heap.go;l=83
 - add an option to execute a job directly when inserted and after that at the regular cadence
 - add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
 - dynamic scaleup and scaledown of the number of workers
