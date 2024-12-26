@@ -190,7 +190,7 @@ func (d *Dispatcher) Stop() {
 		d.cancel()
 
 		// Stop the worker pool
-		d.workerPool.Stop()
+		d.workerPool.stop()
 		// Note: resultChan is closed by workerPool.Stop()
 
 		// Wait for the run loop to exit
@@ -288,7 +288,12 @@ func validateJob(job Job) error {
 func NewDispatcher(workerCount, taskBufferSize, resultBufferSize int) *Dispatcher {
 	resultChan := make(chan Result, resultBufferSize)
 	taskChan := make(chan Task, taskBufferSize)
-	workerPool := NewworkerPool(resultChan, taskChan, workerCount)
+	workerPool := &workerPool{
+		resultChan:   resultChan,
+		stopChan:     make(chan struct{}),
+		taskChan:     taskChan,
+		workersTotal: workerCount,
+	}
 	s := newDispatcher(workerPool, taskChan, resultChan)
 	return s
 }
@@ -325,7 +330,7 @@ func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan R
 	heap.Init(&d.jobQueue)
 
 	log.Debug().Msg("Starting dispatcher")
-	d.workerPool.Start()
+	d.workerPool.start()
 	go d.run()
 
 	return d

@@ -9,8 +9,8 @@ import (
 
 // workerPool manages a pool of workers that execute tasks.
 type workerPool struct {
-	workerCount   int          // Total number of workers in the pool
-	activeWorkers atomic.Int32 // Number of active workers
+	workersTotal  int          // Total number of workers in the pool
+	workersActive atomic.Int32 // Number of active workers
 
 	// TODO: do a lookover for channel directions
 	resultChan chan<- Result // Send-only channel for results
@@ -20,8 +20,8 @@ type workerPool struct {
 	wg sync.WaitGroup
 }
 
-// worker executes tasks from the task channel.
-func (wp *workerPool) worker(id int) {
+// startWorker executes tasks from the task channel.
+func (wp *workerPool) startWorker(id int) {
 	defer wp.wg.Done()
 
 	for {
@@ -32,7 +32,7 @@ func (wp *workerPool) worker(id int) {
 				return
 			}
 			log.Debug().Msgf("Worker %d executing task", id)
-			wp.activeWorkers.Add(1) // Increment active workers
+			wp.workersActive.Add(1) // Increment active workers
 			// TODO: consider processing the task in a separate goroutine, e.g. async task execution within a single worker
 			// TODO cont.: this would allow the worker to continue processing tasks while waiting for the result
 			result := task.Execute()
@@ -42,7 +42,7 @@ func (wp *workerPool) worker(id int) {
 				log.Error().Err(result.Error).Msgf("Worker %d: task execution failed", id)
 			}
 			wp.resultChan <- result
-			wp.activeWorkers.Add(-1) // Decrement active workers
+			wp.workersActive.Add(-1) // Decrement active workers
 			log.Debug().Msgf("Worker %d: finished task", id)
 		case <-wp.stopChan:
 			log.Debug().Msgf("Worker %d: received stop signal, exiting", id)
@@ -51,37 +51,26 @@ func (wp *workerPool) worker(id int) {
 	}
 }
 
-// ActiveWorkers returns the number of active workers.
-func (wp *workerPool) ActiveWorkers() int32 {
-	return wp.activeWorkers.Load()
+// activeWorkers returns the number of active workers.
+func (wp *workerPool) activeWorkers() int32 {
+	return wp.workersActive.Load()
 }
 
-// Start starts the worker pool, creating workers according to wp.WorkerCount.
-func (wp *workerPool) Start() {
-	log.Info().Msgf("Starting worker pool with %d workers", wp.workerCount)
-	wp.wg.Add(wp.workerCount)
-	for i := 0; i < wp.workerCount; i++ {
-		go wp.worker(i)
+// start starts the worker pool, creating workers according to wp.WorkerCount.
+func (wp *workerPool) start() {
+	log.Info().Msgf("Starting worker pool with %d workers", wp.workersTotal)
+	wp.wg.Add(wp.workersTotal)
+	for i := 0; i < wp.workersTotal; i++ {
+		go wp.startWorker(i)
 	}
 }
 
-// Stop signals the worker pool to stop processing tasks and exit.
-func (wp *workerPool) Stop() {
+// stop signals the worker pool to stop processing tasks and exit.
+func (wp *workerPool) stop() {
 	log.Debug().Msg("Attempting worker pool stop")
 	close(wp.stopChan) // Signal workers to stop
 	log.Debug().Msg("Waiting for workers to finish")
 	wp.wg.Wait() // Wait for all workers to finish
 	log.Debug().Msg("Worker pool stopped")
 	close(wp.resultChan)
-}
-
-// NewworkerPool creates a worker pool.
-func NewworkerPool(resultChannel chan Result, taskChannel chan Task, workerCount int) *workerPool {
-	pool := &workerPool{
-		resultChan:  resultChannel,
-		stopChan:    make(chan struct{}),
-		taskChan:    taskChannel,
-		workerCount: workerCount,
-	}
-	return pool
 }
