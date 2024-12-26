@@ -73,3 +73,12 @@ func (wp *workerPool) stop() {
 	log.Debug().Msg("Worker pool stopped")
 	close(wp.resultChan)
 }
+
+func newWorkerPool(workersTotal int, resultChan chan Result, taskChan chan Task) *workerPool {
+	return &workerPool{
+		workersTotal: workersTotal,
+		resultChan:   resultChan,
+		stopChan:     make(chan struct{}),
+		taskChan:     taskChan,
+	}
+}

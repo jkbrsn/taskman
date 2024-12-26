@@ -288,12 +288,7 @@ func validateJob(job Job) error {
 func NewDispatcher(workerCount, taskBufferSize, resultBufferSize int) *Dispatcher {
 	resultChan := make(chan Result, resultBufferSize)
 	taskChan := make(chan Task, taskBufferSize)
-	workerPool := &workerPool{
-		resultChan:   resultChan,
-		stopChan:     make(chan struct{}),
-		taskChan:     taskChan,
-		workersTotal: workerCount,
-	}
+	workerPool := newWorkerPool(workerCount, resultChan, taskChan)
 	s := newDispatcher(workerPool, taskChan, resultChan)
 	return s
 }
