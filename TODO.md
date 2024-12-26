@@ -1,11 +1,7 @@
 # to-do list for the go-taskman package
 
-## to implement
+## to do before 0.1.0
 
-- add an option to instantly execute a job in the queue, even though it has some time until next execution
-  - use heap.Fix to reposition the job in the heap, https://cs.opensource.google/go/go/+/refs/tags/go1.23.4:src/container/heap/heap.go;l=83
-- add an option to execute a job directly when inserted and after that at the regular cadence
-- add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
 - dynamic scaleup and scaledown of the number of workers
 - resultChan
   - move resultChan close to the dispatcher, but add a signal from the worker pool to let the dispatcher know it's done closing workers
@@ -14,6 +10,13 @@
   - add unit tests for worker_pool.go
   - add unit tests for priority_queue.go
 - better readme
+
+## to do later
+
+- add an option to execute a job directly when inserted and after that at the regular cadence
+- add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
+- add an option to instantly execute a job in the queue, even though it has some time until next execution
+  - use heap.Fix to reposition the job in the heap, https://cs.opensource.google/go/go/+/refs/tags/go1.23.4:src/container/heap/heap.go;l=83
 
 # feature ideas
 
