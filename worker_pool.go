@@ -9,8 +9,9 @@ import (
 
 // workerPool manages a pool of workers that execute tasks.
 type workerPool struct {
-	workersTotal  int          // Total number of workers in the pool
-	workersActive atomic.Int32 // Number of active workers
+	workersActive  atomic.Int32 // Number of active workers
+	workersRunning atomic.Int32 // Number of running workers
+	workersTotal   int          // Total number of workers in the pool
 
 	// TODO: do a lookover for channel directions
 	resultChan chan<- Result // Send-only channel for results
@@ -22,7 +23,12 @@ type workerPool struct {
 
 // startWorker executes tasks from the task channel.
 func (wp *workerPool) startWorker(id int) {
-	defer wp.wg.Done()
+	log.Debug().Msgf("Starting worker %d", id)
+	wp.workersRunning.Add(1)
+	defer func() {
+		wp.workersRunning.Add(-1)
+		wp.wg.Done()
+	}()
 
 	for {
 		select {
@@ -52,6 +58,11 @@ func (wp *workerPool) startWorker(id int) {
 // activeWorkers returns the number of active workers.
 func (wp *workerPool) activeWorkers() int32 {
 	return wp.workersActive.Load()
+}
+
+// runningWorkers returns the number of running workers.
+func (wp *workerPool) runningWorkers() int32 {
+	return wp.workersRunning.Load()
 }
 
 // start starts the worker pool, creating workers according to wp.WorkerCount.
