@@ -3,7 +3,7 @@
 ## to do before 0.1.0
 
 - better readme
-- clear in-code TODO:s
+- complete in-code TODO:s
 - ensure basic test coverage
 - align function docs and error returns across package
 

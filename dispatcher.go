@@ -49,7 +49,6 @@ type Dispatcher struct {
 }
 
 // Task is an interface for tasks that can be executed.
-// TODO: consider adding a context.Context parameter to Execute, to handle timeouts and cancellation (can also be forcefully added in the worker)
 type Task interface {
 	Execute() error
 }
@@ -321,7 +320,6 @@ func validateJob(job Job) error {
 		return ErrNoTasks
 	}
 	// Jobs with a zero NextExec time are invalid, as they would execute immediately.
-	// TODO: revisit if immediate execution support is added
 	if job.NextExec.IsZero() {
 		return ErrZeroNextExec
 	}

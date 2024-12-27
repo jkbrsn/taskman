@@ -58,7 +58,6 @@ func (pq *priorityQueue) JobInQueue(jobID string) (int, error) {
 }
 
 // Peek returns the job with the earliest NextExec time.
-// TODO: test
 func (pq *priorityQueue) Peek() *Job {
 	if len(*pq) == 0 {
 		return nil
@@ -67,7 +66,6 @@ func (pq *priorityQueue) Peek() *Job {
 }
 
 // RemoveByID finds a job in the priorityQueue by ID, and removes it if found.
-// TODO: test
 func (pq *priorityQueue) RemoveByID(jobID string) error {
 	for i, job := range *pq {
 		if job.ID == jobID {
@@ -79,7 +77,6 @@ func (pq *priorityQueue) RemoveByID(jobID string) error {
 }
 
 // Update modifies the NextExec of a job in the heap.
-// TODO: test
 func (pq *priorityQueue) Update(job *Job, nextExec time.Time) {
 	job.NextExec = nextExec
 	heap.Fix(pq, job.index)

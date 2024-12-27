@@ -66,7 +66,6 @@ func (wp *workerPool) runningWorkers() int32 {
 }
 
 // start starts the worker pool, creating workers according to wp.WorkerCount.
-// TODO: consider shielding this method from multiple calls using a sync.Once
 func (wp *workerPool) start() {
 	log.Info().Msgf("Starting worker pool with %d workers", wp.workersTotal)
 	wp.wg.Add(wp.workersTotal)
