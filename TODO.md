@@ -3,9 +3,9 @@
 ## to do before 0.1.0
 
 - resultChan
-  - then, exchange it for an errorChan, which will be used to signal errors from the worker pool to the dispatcher
   - finally, make the Dispatcher automtically consume the errorChan (and log errors?) unless a function á la "SetErrorHandler" is called
 - better readme
+- clear in-code TODO:s
 
 ## to do later
 

@@ -20,12 +20,12 @@ type MockTask struct {
 	executeFunc func()
 }
 
-func (mt MockTask) Execute() Result {
+func (mt MockTask) Execute() error {
 	log.Debug().Msgf("Executing MockTask with ID: %s", mt.ID)
 	if mt.executeFunc != nil {
 		mt.executeFunc()
 	}
-	return Result{Success: true}
+	return nil
 }
 
 // Helper function to determine the buffer size of a channel
@@ -33,7 +33,7 @@ func getChannelBufferSize(ch interface{}) int {
 	switch v := ch.(type) {
 	case chan Task:
 		return cap(v)
-	case chan Result:
+	case chan error:
 		return cap(v)
 	default:
 		return 0
@@ -61,6 +61,7 @@ func getMockedJob(nTasks int, jobID string, cadence time.Duration) Job {
 }
 
 // TODO: write test comparing what happens when different channel types are used for taskChan
+// TODO: write a test consuming non-nil errors on the resultChan
 
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
@@ -118,8 +119,8 @@ func TestAddFunc(t *testing.T) {
 	dispatcher := NewDispatcher(10, 2, 1)
 	defer dispatcher.Stop()
 
-	function := func() Result {
-		return Result{Success: true}
+	function := func() error {
+		return nil
 	}
 	cadence := 100 * time.Millisecond
 	jobID, err := dispatcher.AddFunc(function, cadence)

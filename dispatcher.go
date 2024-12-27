@@ -34,7 +34,7 @@ type Dispatcher struct {
 	cancel context.CancelFunc // Cancel function for the dispatcher
 
 	newTaskChan chan bool     // Channel to signal that new tasks have entered the queue
-	resultChan  chan Result   // Channel to receive results from the worker pool
+	resultChan  chan error    // Channel to receive results from the worker pool
 	runDone     chan struct{} // Channel to signal run has stopped
 	taskChan    chan Task     // Channel to send tasks to the worker pool
 
@@ -46,27 +46,19 @@ type Dispatcher struct {
 	workerPoolDone chan struct{} // Channel to receive signal that the worker pool has stopped
 }
 
-// Result represents the result of a task execution.
-// TODO: remove
-type Result struct {
-	Data    map[string]interface{}
-	Error   error
-	Success bool
-}
-
 // Task is an interface for tasks that can be executed.
 // TODO: consider adding a context.Context parameter to Execute, to handle timeouts and cancellation (can also be forcefully added in the worker)
 type Task interface {
-	Execute() Result
+	Execute() error
 }
 
 // BasicTask is a task that executes a function.
 type BasicTask struct {
-	Function func() Result
+	Function func() error
 }
 
 // Execure executes the function and returns the result.
-func (f BasicTask) Execute() Result {
+func (f BasicTask) Execute() error {
 	result := f.Function()
 	return result
 }
@@ -85,7 +77,7 @@ type Job struct {
 // AddFunc takes a function and adds it to the Dispatcher in a Job.
 // Returns the resultings job's ID.
 // Note: wraps the function in a BasicTask.
-func (d *Dispatcher) AddFunc(function func() Result, cadence time.Duration) (string, error) {
+func (d *Dispatcher) AddFunc(function func() error, cadence time.Duration) (string, error) {
 	task := BasicTask{function}
 	job := Job{
 		Tasks:    []Task{task},
@@ -202,8 +194,8 @@ func (d *Dispatcher) ReplaceJob(newJob Job) error {
 	return nil
 }
 
-// Results returns a read-only channel for consuming results.
-func (d *Dispatcher) Results() <-chan Result {
+// errors returns a read-only channel for consuming results.
+func (d *Dispatcher) Results() <-chan error {
 	return d.resultChan
 }
 
@@ -314,7 +306,7 @@ func validateJob(job Job) error {
 
 // NewDispatcher creates, starts and returns a new Dispatcher.
 func NewDispatcher(workerCount, taskBufferSize, resultBufferSize int) *Dispatcher {
-	resultChan := make(chan Result, resultBufferSize)
+	resultChan := make(chan error, resultBufferSize)
 	taskChan := make(chan Task, taskBufferSize)
 	workerPoolDone := make(chan struct{})
 	workerPool := newWorkerPool(workerCount, resultChan, taskChan, workerPoolDone)
@@ -324,7 +316,7 @@ func NewDispatcher(workerCount, taskBufferSize, resultBufferSize int) *Dispatche
 
 // newDispatcher creates a new Dispatcher.
 // The internal constructor pattern allows for dependency injection of internal components.
-func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan Result, workerPoolDone chan struct{}) *Dispatcher {
+func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan error, workerPoolDone chan struct{}) *Dispatcher {
 	log.Debug().Msg("Creating new dispatcher")
 
 	// Input validation

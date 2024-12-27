@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewWorkerPool(t *testing.T) {
-	resultChan := make(chan Result, 1)
+	resultChan := make(chan error, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
 	pool := newWorkerPool(10, resultChan, taskChan, workerPoolDone)
@@ -19,7 +19,7 @@ func TestNewWorkerPool(t *testing.T) {
 }
 
 func TestWorkerPoolStartStop(t *testing.T) {
-	resultChan := make(chan Result, 1)
+	resultChan := make(chan error, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
 	pool := newWorkerPool(4, resultChan, taskChan, workerPoolDone)
@@ -47,7 +47,7 @@ func TestWorkerPoolStartStop(t *testing.T) {
 }
 
 func TestWorkerPoolTaskExecution(t *testing.T) {
-	resultChan := make(chan Result, 1)
+	resultChan := make(chan error, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
 	pool := newWorkerPool(1, resultChan, taskChan, workerPoolDone)
