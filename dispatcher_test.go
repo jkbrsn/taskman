@@ -102,8 +102,8 @@ func TestDispatcherStop(t *testing.T) {
 	dispatcher.AddTask(testTask, testTask.cadence)
 
 	// Since the dispatcher is stopped, the task should not have been added to the job queue
-	if dispatcher.jobQueue.Len() != 0 {
-		t.Fatalf("Expected job queue length to be 0, got %d", dispatcher.jobQueue.Len())
+	if dispatcher.jobsInQueue() != 0 {
+		t.Fatalf("Expected job queue length to be 0, got %d", dispatcher.jobsInQueue())
 	}
 
 	// Wait some time to see if the task executes
@@ -128,7 +128,7 @@ func TestAddFunc(t *testing.T) {
 		t.Fatalf("Error adding function: %v", err)
 	}
 
-	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
 
 	job := dispatcher.jobQueue[0]
 	assert.Equal(t, 1, len(job.Tasks), "Expected job to have 1 task, got %d", len(job.Tasks))
@@ -145,7 +145,7 @@ func TestAddTask(t *testing.T) {
 		t.Fatalf("Error adding task: %v", err)
 	}
 
-	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
 
 	job := dispatcher.jobQueue[0]
 	assert.Equal(t, 1, len(job.Tasks), "Expected job to have 1 task, got %d", len(job.Tasks))
@@ -172,7 +172,7 @@ func TestAddTasks(t *testing.T) {
 	}
 
 	// Assert that the job was added
-	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
 	job := dispatcher.jobQueue[0]
 	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
 	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
@@ -189,7 +189,7 @@ func TestAddJob(t *testing.T) {
 	}
 
 	// Assert that the job was added
-	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
 	scheduledJob := dispatcher.jobQueue[0]
 	assert.Equal(t, len(job.Tasks), len(scheduledJob.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
 	assert.Equal(t, job.ID, scheduledJob.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
@@ -204,7 +204,7 @@ func TestRemoveJob(t *testing.T) {
 	assert.Nil(t, err, "Error adding job")
 
 	// Assert that the job was added
-	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
 	qJob := dispatcher.jobQueue[0]
 	assert.Equal(t, jobID, qJob.ID, "Expected job ID to be %s, got %s", jobID, qJob.ID)
 	assert.Equal(t, 2, len(qJob.Tasks), "Expected job to have 2 tasks, got %d", len(qJob.Tasks))
@@ -214,7 +214,7 @@ func TestRemoveJob(t *testing.T) {
 	assert.Nil(t, err, "Error removing job")
 
 	// Assert that the job was removed
-	assert.Equal(t, 0, dispatcher.jobQueue.Len(), "Expected job queue length to be 0, got %d", dispatcher.jobQueue.Len())
+	assert.Equal(t, 0, dispatcher.jobsInQueue(), "Expected job queue length to be 0, got %d", dispatcher.jobsInQueue())
 
 	// Try removing the job once more
 	err = dispatcher.RemoveJob(jobID)
@@ -230,7 +230,7 @@ func TestReplaceJob(t *testing.T) {
 	_, err := dispatcher.AddJob(firstJob)
 	assert.Nil(t, err, "Error adding job")
 	// Assert job added
-	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
 	qJob := dispatcher.jobQueue[0]
 	assert.Equal(t, firstJob.ID, qJob.ID, "Expected ID to be '%s', got '%s'", firstJob.ID, qJob.ID)
 
@@ -239,7 +239,7 @@ func TestReplaceJob(t *testing.T) {
 	err = dispatcher.ReplaceJob(secondJob)
 	assert.Nil(t, err, "Error replacing job")
 	// Assert that the job was replaced in the queue
-	assert.Equal(t, 1, dispatcher.jobQueue.Len(), "Expected job queue length to be 1, got %d", dispatcher.jobQueue.Len())
+	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
 	qJob = dispatcher.jobQueue[0]
 	// The queue job should retain the index and NextExec time of the first job
 	assert.Equal(t, firstJob.index, qJob.index, "Expected index to be '%s', got '%s'", secondJob.index, qJob.index)
@@ -454,7 +454,7 @@ func TestConcurrentAddTask(t *testing.T) {
 
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
-	assert.Equal(t, expectedTasks, dispatcher.jobQueue.Len(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobQueue.Len())
+	assert.Equal(t, expectedTasks, dispatcher.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobsInQueue())
 }
 
 func TestConcurrentAddJob(t *testing.T) {
@@ -487,7 +487,7 @@ func TestConcurrentAddJob(t *testing.T) {
 
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
-	assert.Equal(t, expectedTasks, dispatcher.jobQueue.Len(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobQueue.Len())
+	assert.Equal(t, expectedTasks, dispatcher.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobsInQueue())
 }
 
 func TestZeroCadenceTask(t *testing.T) {
@@ -512,6 +512,9 @@ func TestZeroCadenceTask(t *testing.T) {
 }
 
 func TestValidateJob(t *testing.T) {
+	dispatcher := NewDispatcher(10, 1, 1)
+	defer dispatcher.Stop()
+
 	// Test case: valid job
 	validJob := Job{
 		ID:       "valid-job",
@@ -519,7 +522,7 @@ func TestValidateJob(t *testing.T) {
 		NextExec: time.Now().Add(100 * time.Millisecond),
 		Tasks:    []Task{MockTask{ID: "task1"}},
 	}
-	err := validateJob(validJob)
+	err := dispatcher.validateJob(validJob)
 	assert.NoError(t, err, "Expected no error for valid job")
 
 	// Test case: invalid job with zero cadence
@@ -529,8 +532,8 @@ func TestValidateJob(t *testing.T) {
 		NextExec: time.Now().Add(100 * time.Millisecond),
 		Tasks:    []Task{MockTask{ID: "task1"}},
 	}
-	err = validateJob(invalidJobZeroCadence)
-	assert.Equal(t, ErrInvalidCadence, err, "Expected ErrInvalidCadence for job with zero cadence")
+	err = dispatcher.validateJob(invalidJobZeroCadence)
+	assert.ErrorIs(t, err, ErrInvalidCadence, "Expected ErrInvalidCadence for job with zero cadence")
 
 	// Test case: invalid job with no tasks
 	invalidJobNoTasks := Job{
@@ -539,8 +542,8 @@ func TestValidateJob(t *testing.T) {
 		NextExec: time.Now().Add(100 * time.Millisecond),
 		Tasks:    []Task{},
 	}
-	err = validateJob(invalidJobNoTasks)
-	assert.Equal(t, ErrNoTasks, err, "Expected ErrNoTasks for job with no tasks")
+	err = dispatcher.validateJob(invalidJobNoTasks)
+	assert.ErrorIs(t, err, ErrNoTasks, "Expected ErrNoTasks for job with no tasks")
 
 	// Test case: invalid job with zero NextExec time
 	invalidJobZeroNextExec := Job{
@@ -549,6 +552,18 @@ func TestValidateJob(t *testing.T) {
 		NextExec: time.Time{},
 		Tasks:    []Task{MockTask{ID: "task1"}},
 	}
-	err = validateJob(invalidJobZeroNextExec)
-	assert.Equal(t, ErrZeroNextExec, err, "Expected ErrZeroNextExec for job with zero NextExec time")
+	err = dispatcher.validateJob(invalidJobZeroNextExec)
+	assert.ErrorIs(t, err, ErrZeroNextExec, "Expected ErrZeroNextExec for job with zero NextExec time")
+
+	// Test case: existing job ID
+	alreadyPresentJob := Job{
+		ID:       "job-in-queue",
+		Cadence:  100 * time.Millisecond,
+		NextExec: time.Now().Add(100 * time.Millisecond),
+		Tasks:    []Task{MockTask{ID: "task1"}},
+	}
+	dispatcher.AddJob(alreadyPresentJob)
+	duplicateJob := alreadyPresentJob
+	err = dispatcher.validateJob(duplicateJob)
+	assert.ErrorIs(t, err, ErrDuplicateJobID, "Expected to find duplicate job ID")
 }

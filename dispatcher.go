@@ -16,6 +16,8 @@ import (
 var (
 	// ErrDispatcherStopped is returned when a task is added to a stopped dispatcher.
 	ErrDispatcherStopped = errors.New("dispatcher is stopped")
+	// ErrDuplicateJobID is returned when a duplicate job ID is found.
+	ErrDuplicateJobID = errors.New("duplicate job ID")
 	// ErrInvalidCadence is returned when a job has an invalid cadence.
 	ErrInvalidCadence = errors.New("job cadence must be greater than 0")
 	// ErrJobNotFound is returned when a job is not found.
@@ -98,9 +100,8 @@ func (d *Dispatcher) AddFunc(function func() error, cadence time.Duration) (stri
 // - NextExec must be non-zero
 // - Job must have an ID, unique within the Dispatcher
 func (d *Dispatcher) AddJob(job Job) (string, error) {
-	// TODO: make the validation also check if the ID is already in use
 	// Validate the job
-	err := validateJob(job)
+	err := d.validateJob(job)
 	if err != nil {
 		return "", err
 	}
@@ -247,6 +248,14 @@ func (d *Dispatcher) consumeErrorChan() {
 	}
 }
 
+// jobsInQueue returns the length of the jobQueue slice.
+func (d *Dispatcher) jobsInQueue() int {
+	d.Lock()
+	defer d.Unlock()
+
+	return d.jobQueue.Len()
+}
+
 // run runs the Dispatcher.
 // This function is intended to be run as a goroutine.
 func (d *Dispatcher) run() {
@@ -309,7 +318,7 @@ func (d *Dispatcher) run() {
 }
 
 // validateJob validates a Job.
-func validateJob(job Job) error {
+func (d *Dispatcher) validateJob(job Job) error {
 	// Jobs with cadence <= 0 are invalid, as such jobs would execute immediately and continuously
 	// and risk overwhelming the worker pool.
 	if job.Cadence <= 0 {
@@ -322,6 +331,12 @@ func validateJob(job Job) error {
 	// Jobs with a zero NextExec time are invalid, as they would execute immediately.
 	if job.NextExec.IsZero() {
 		return ErrZeroNextExec
+	}
+	// Job ID:s are unique, so duplicates are not allowed to be added.
+	d.Lock()
+	defer d.Unlock()
+	if _, ok := d.jobQueue.JobInQueue(job.ID); ok == nil {
+		return ErrDuplicateJobID
 	}
 	return nil
 }
