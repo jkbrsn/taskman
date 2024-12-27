@@ -6,6 +6,7 @@
   - finally, make the Dispatcher automtically consume the errorChan (and log errors?) unless a function á la "SetErrorHandler" is called
 - better readme
 - clear in-code TODO:s
+- align function docs and error returns across package
 
 ## to do later
 
