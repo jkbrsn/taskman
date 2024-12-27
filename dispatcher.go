@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,17 +31,18 @@ var (
 type Dispatcher struct {
 	sync.RWMutex
 
-	ctx    context.Context    // Context for the dispatcher
-	cancel context.CancelFunc // Cancel function for the dispatcher
+	ctx      context.Context    // Context for the dispatcher
+	cancel   context.CancelFunc // Cancel function for the dispatcher
+	runDone  chan struct{}      // Channel to signal run has stopped
+	stopOnce sync.Once          // Ensures Stop is only called once
 
-	newTaskChan chan bool     // Channel to signal that new tasks have entered the queue
-	errorChan   chan error    // Channel to receive errors from the worker pool
-	runDone     chan struct{} // Channel to signal run has stopped
-	taskChan    chan Task     // Channel to send tasks to the worker pool
+	newTaskChan chan bool // Channel to signal that new tasks have entered the queue
+	taskChan    chan Task // Channel to send tasks to the worker pool
 
 	jobQueue priorityQueue // A priority queue to hold the scheduled jobs
 
-	stopOnce sync.Once
+	errorChan   chan error  // Channel to receive errors from the worker pool
+	externalErr atomic.Bool // Tracks ownership of error channel consumption
 
 	workerPool     *workerPool
 	workerPoolDone chan struct{} // Channel to receive signal that the worker pool has stopped
@@ -195,8 +197,13 @@ func (d *Dispatcher) ReplaceJob(newJob Job) error {
 }
 
 // ErrorChannel returns a read-only channel for consuming errors from task execution.
-func (d *Dispatcher) ErrorChannel() <-chan error {
-	return d.errorChan
+// Calling this transfers responsibility for consuming errors to the caller.
+func (d *Dispatcher) ErrorChannel() (<-chan error, error) {
+	if !d.externalErr.CompareAndSwap(false, true) {
+		return nil, errors.New("ErrorChannel can only be called once, returning nil")
+
+	}
+	return d.errorChan, nil
 }
 
 // Stop signals the Dispatcher to stop processing tasks and exit.
@@ -222,6 +229,23 @@ func (d *Dispatcher) Stop() {
 
 		log.Debug().Msg("Dispatcher stopped")
 	})
+}
+
+// consumeErrorChan handles errors until ErrorChannel() is called.
+func (d *Dispatcher) consumeErrorChan() {
+	for {
+		select {
+		case err := <-d.errorChan:
+			if d.externalErr.Load() {
+				// External ownership started; internal consumption stops
+				return
+			}
+			// Handle error internally (e.g., log it)
+			log.Debug().Err(err).Msg("Unhandled error")
+		case <-d.ctx.Done():
+			return
+		}
+	}
 }
 
 // run runs the Dispatcher.
@@ -349,6 +373,7 @@ func newDispatcher(workerPool *workerPool, taskChan chan Task, errorChan chan er
 	log.Debug().Msg("Starting dispatcher")
 	d.workerPool.start()
 	go d.run()
+	go d.consumeErrorChan()
 
 	return d
 }

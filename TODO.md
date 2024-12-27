@@ -2,10 +2,9 @@
 
 ## to do before 0.1.0
 
-- resultChan
-  - finally, make the Dispatcher automtically consume the errorChan (and log errors?) unless a function á la "SetErrorHandler" is called
 - better readme
 - clear in-code TODO:s
+- ensure basic test coverage
 - align function docs and error returns across package
 
 ## to do later

@@ -61,7 +61,7 @@ func getMockedJob(nTasks int, jobID string, cadence time.Duration) Job {
 }
 
 // TODO: write test comparing what happens when different channel types are used for taskChan
-// TODO: write a test consuming non-nil errors on the errorChan
+// TODO: write a test for error consumption on the errorChan, both internally and when handed over to the caller
 
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
@@ -336,8 +336,11 @@ func TestAddTaskDuringExecution(t *testing.T) {
 	defer dispatcher.Stop()
 
 	// Consume errorChan to prevent workers from blocking
+	// TODO: remove, no longer needed due to self consumption?
 	go func() {
-		for range dispatcher.ErrorChannel() {
+		errChan, err := dispatcher.ErrorChannel()
+		assert.Nil(t, err, "Expected no error getting error channel")
+		for range errChan {
 			// Do nothing
 		}
 	}()
