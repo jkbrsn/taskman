@@ -61,7 +61,7 @@ func getMockedJob(nTasks int, jobID string, cadence time.Duration) Job {
 }
 
 // TODO: write test comparing what happens when different channel types are used for taskChan
-// TODO: write a test consuming non-nil errors on the resultChan
+// TODO: write a test consuming non-nil errors on the errorChan
 
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
@@ -81,10 +81,10 @@ func TestNewDispatcher(t *testing.T) {
 	taskChanBuffer := getChannelBufferSize(dispatcher.taskChan)
 	assert.Equal(t, 1, taskChanBuffer, "Expected task channel to have buffer size 1")
 
-	// Verify resultChan is initialized and has the correct buffer size
-	assert.NotNil(t, dispatcher.resultChan, "Expected result channel to be non-nil")
-	resultChanBuffer := getChannelBufferSize(dispatcher.resultChan)
-	assert.Equal(t, 1, resultChanBuffer, "Expected result channel to have buffer size 1")
+	// Verify errorChan is initialized and has the correct buffer size
+	assert.NotNil(t, dispatcher.errorChan, "Expected error channel to be non-nil")
+	errorChanBuffer := getChannelBufferSize(dispatcher.errorChan)
+	assert.Equal(t, 1, errorChanBuffer, "Expected error channel to have buffer size 1")
 }
 
 func TestDispatcherStop(t *testing.T) {
@@ -288,8 +288,8 @@ func TestTaskExecution(t *testing.T) {
 }
 
 func TestTaskRescheduling(t *testing.T) {
-	// Make room in buffered channel for multiple results, since we're not consuming them in this test
-	// and the results channel otherwise blocks the workers from executing tasks
+	// Make room in buffered channel for multiple errors (4), since we're not consuming them in this test
+	// and the error channel otherwise blocks the workers from executing tasks
 	dispatcher := NewDispatcher(10, 1, 4)
 	defer dispatcher.Stop()
 
@@ -335,9 +335,9 @@ func TestAddTaskDuringExecution(t *testing.T) {
 	dispatcher := NewDispatcher(10, 1, 1)
 	defer dispatcher.Stop()
 
-	// Consume resultChan to prevent workers from blocking
+	// Consume errorChan to prevent workers from blocking
 	go func() {
-		for range dispatcher.Results() {
+		for range dispatcher.ErrorChannel() {
 			// Do nothing
 		}
 	}()

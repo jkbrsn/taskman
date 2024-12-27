@@ -14,7 +14,7 @@ type workerPool struct {
 	workersTotal   int          // Total number of workers in the pool
 
 	// TODO: do a lookover for channel directions
-	resultChan     chan<- error  // Send-only channel for results
+	errorChan      chan<- error  // Send-only channel for errors
 	stopChan       chan struct{} // Channel to signal stopping the worker pool
 	taskChan       <-chan Task   // Receive-only channel for tasks
 	workerPoolDone chan struct{} // Channel to signal worker pool is done
@@ -43,10 +43,9 @@ func (wp *workerPool) startWorker(id int) {
 			err := task.Execute()
 			if err != nil {
 				// No retry policy is implemented, we just log the error for now
-				// TODO: consider leaving all error handling to the caller, even logging
-				log.Error().Err(err).Msgf("Worker %d: task execution failed", id)
+				log.Debug().Err(err).Msgf("Worker %d: task execution failed", id)
 			}
-			wp.resultChan <- err
+			wp.errorChan <- err
 			wp.workersActive.Add(-1) // Decrement active workers
 			log.Debug().Msgf("Worker %d: finished task", id)
 		case <-wp.stopChan:
@@ -86,9 +85,9 @@ func (wp *workerPool) stop() {
 	close(wp.workerPoolDone) // Signal worker pool is done
 }
 
-func newWorkerPool(workersTotal int, resultChan chan error, taskChan chan Task, workerPoolDone chan struct{}) *workerPool {
+func newWorkerPool(workersTotal int, errorChan chan error, taskChan chan Task, workerPoolDone chan struct{}) *workerPool {
 	return &workerPool{
-		resultChan:     resultChan,
+		errorChan:      errorChan,
 		stopChan:       make(chan struct{}),
 		taskChan:       taskChan,
 		workerPoolDone: workerPoolDone,

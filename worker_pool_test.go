@@ -8,10 +8,10 @@ import (
 )
 
 func TestNewWorkerPool(t *testing.T) {
-	resultChan := make(chan error, 1)
+	errorChan := make(chan error, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(10, resultChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(10, errorChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
 	// Verify stopChan initialization
@@ -19,10 +19,10 @@ func TestNewWorkerPool(t *testing.T) {
 }
 
 func TestWorkerPoolStartStop(t *testing.T) {
-	resultChan := make(chan error, 1)
+	errorChan := make(chan error, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(4, resultChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(4, errorChan, taskChan, workerPoolDone)
 	defer func() {
 		pool.stop()
 
@@ -47,10 +47,10 @@ func TestWorkerPoolStartStop(t *testing.T) {
 }
 
 func TestWorkerPoolTaskExecution(t *testing.T) {
-	resultChan := make(chan error, 1)
+	errorChan := make(chan error, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(1, resultChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(1, errorChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
 	// Start the worker

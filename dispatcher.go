@@ -34,7 +34,7 @@ type Dispatcher struct {
 	cancel context.CancelFunc // Cancel function for the dispatcher
 
 	newTaskChan chan bool     // Channel to signal that new tasks have entered the queue
-	resultChan  chan error    // Channel to receive results from the worker pool
+	errorChan   chan error    // Channel to receive errors from the worker pool
 	runDone     chan struct{} // Channel to signal run has stopped
 	taskChan    chan Task     // Channel to send tasks to the worker pool
 
@@ -57,10 +57,10 @@ type BasicTask struct {
 	Function func() error
 }
 
-// Execure executes the function and returns the result.
+// Execure executes the function and returns the eventual error.
 func (f BasicTask) Execute() error {
-	result := f.Function()
-	return result
+	err := f.Function()
+	return err
 }
 
 // Job describes when to execute a specific group of tasks.
@@ -194,9 +194,9 @@ func (d *Dispatcher) ReplaceJob(newJob Job) error {
 	return nil
 }
 
-// errors returns a read-only channel for consuming results.
-func (d *Dispatcher) Results() <-chan error {
-	return d.resultChan
+// ErrorChannel returns a read-only channel for consuming errors from task execution.
+func (d *Dispatcher) ErrorChannel() <-chan error {
+	return d.errorChan
 }
 
 // Stop signals the Dispatcher to stop processing tasks and exit.
@@ -209,7 +209,7 @@ func (d *Dispatcher) Stop() {
 
 		// Stop the worker pool
 		d.workerPool.stop()
-		// Note: resultChan is closed by workerPool.Stop()
+		// Note: errorChan is closed by workerPool.Stop()
 
 		// Wait for the run loop to exit, and the worker pool to stop
 		<-d.runDone
@@ -217,7 +217,7 @@ func (d *Dispatcher) Stop() {
 
 		// Close the remaining channels
 		close(d.newTaskChan)
-		close(d.resultChan)
+		close(d.errorChan)
 		close(d.taskChan)
 
 		log.Debug().Msg("Dispatcher stopped")
@@ -305,18 +305,18 @@ func validateJob(job Job) error {
 }
 
 // NewDispatcher creates, starts and returns a new Dispatcher.
-func NewDispatcher(workerCount, taskBufferSize, resultBufferSize int) *Dispatcher {
-	resultChan := make(chan error, resultBufferSize)
+func NewDispatcher(workerCount, taskBufferSize, errorBufferSize int) *Dispatcher {
+	errorChan := make(chan error, errorBufferSize)
 	taskChan := make(chan Task, taskBufferSize)
 	workerPoolDone := make(chan struct{})
-	workerPool := newWorkerPool(workerCount, resultChan, taskChan, workerPoolDone)
-	s := newDispatcher(workerPool, taskChan, resultChan, workerPoolDone)
+	workerPool := newWorkerPool(workerCount, errorChan, taskChan, workerPoolDone)
+	s := newDispatcher(workerPool, taskChan, errorChan, workerPoolDone)
 	return s
 }
 
 // newDispatcher creates a new Dispatcher.
 // The internal constructor pattern allows for dependency injection of internal components.
-func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan error, workerPoolDone chan struct{}) *Dispatcher {
+func newDispatcher(workerPool *workerPool, taskChan chan Task, errorChan chan error, workerPoolDone chan struct{}) *Dispatcher {
 	log.Debug().Msg("Creating new dispatcher")
 
 	// Input validation
@@ -326,8 +326,8 @@ func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan e
 	if taskChan == nil {
 		panic("taskChan cannot be nil")
 	}
-	if resultChan == nil {
-		panic("resultChan cannot be nil")
+	if errorChan == nil {
+		panic("errorChan cannot be nil")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -337,7 +337,7 @@ func newDispatcher(workerPool *workerPool, taskChan chan Task, resultChan chan e
 		cancel:         cancel,
 		jobQueue:       make(priorityQueue, 0),
 		newTaskChan:    make(chan bool, 1),
-		resultChan:     resultChan,
+		errorChan:      errorChan,
 		runDone:        make(chan struct{}),
 		taskChan:       taskChan,
 		workerPool:     workerPool,
