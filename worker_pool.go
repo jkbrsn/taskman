@@ -13,7 +13,6 @@ type workerPool struct {
 	workersRunning atomic.Int32 // Number of running workers
 	workersTotal   int          // Total number of workers in the pool
 
-	// TODO: do a lookover for channel directions
 	errorChan      chan<- error  // Send-only channel for errors
 	stopChan       chan struct{} // Channel to signal stopping the worker pool
 	taskChan       <-chan Task   // Receive-only channel for tasks
