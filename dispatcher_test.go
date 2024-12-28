@@ -414,6 +414,7 @@ func TestAddTaskDuringExecution(t *testing.T) {
 	mu.Unlock()
 }
 
+// TODO: fix detected race condition
 func TestConcurrentAddTask(t *testing.T) {
 	// Deactivate debug logs for this test
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.999"}).Level(zerolog.InfoLevel)
@@ -444,6 +445,7 @@ func TestConcurrentAddTask(t *testing.T) {
 	assert.Equal(t, expectedTasks, dispatcher.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobsInQueue())
 }
 
+// TODO: fix detected race condition
 func TestConcurrentAddJob(t *testing.T) {
 	// Deactivate debug logs for this test
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.999"}).Level(zerolog.InfoLevel)

@@ -216,7 +216,6 @@ func (d *Dispatcher) Stop() {
 
 		// Stop the worker pool
 		d.workerPool.stop()
-		// Note: errorChan is closed by workerPool.Stop()
 
 		// Wait for the run loop to exit, and the worker pool to stop
 		<-d.runDone
@@ -247,7 +246,9 @@ func (d *Dispatcher) consumeErrorChan() {
 			}
 			// Handle error internally (e.g., log it)
 			log.Debug().Err(err).Msg("Unhandled error")
-		case <-d.ctx.Done():
+		case <-d.workerPoolDone:
+			// Only stop consuming once the worker pool is done, since any
+			// remaining workers will need to send errors on errorChan
 			return
 		}
 	}
