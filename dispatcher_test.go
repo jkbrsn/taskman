@@ -332,16 +332,6 @@ func TestAddTaskDuringExecution(t *testing.T) {
 	dispatcher := NewDispatcher(10, 1, 1)
 	defer dispatcher.Stop()
 
-	// Consume errorChan to prevent workers from blocking
-	// TODO: remove, no longer needed due to self consumption?
-	go func() {
-		errChan, err := dispatcher.ErrorChannel()
-		assert.Nil(t, err, "Expected no error getting error channel")
-		for range errChan {
-			// Do nothing
-		}
-	}()
-
 	// Dedicated channels for task execution signals
 	task1Executed := make(chan struct{})
 	defer close(task1Executed)
