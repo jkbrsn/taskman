@@ -67,6 +67,24 @@ func TestWorkerPoolTaskExecution(t *testing.T) {
 		ID: "test-task",
 	}
 
+	// Listen to the error channel, confirm no error is received
+	timeout := time.After(100 * time.Millisecond)
+	go func() {
+	Loop:
+		for {
+			select {
+			case err, ok := <-errorChan:
+				if !ok {
+					break Loop // Channel closed
+				}
+				assert.Failf(t, "No error should have been received", err.Error())
+			case <-timeout:
+				assert.Fail(t, "Test timed out waiting on error")
+				break Loop // Avoid infinite loop in case of test failure
+			}
+		}
+	}()
+
 	// Send the task to the worker and verify active workers during task execution
 	taskChan <- task
 	time.Sleep(5 * time.Millisecond) // Wait for worker to pick up task
@@ -97,7 +115,7 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 	}
 
 	// Listen to the error channel, confirm error is received
-	timeout := time.After(50 * time.Millisecond)
+	timeout := time.After(100 * time.Millisecond)
 	go func() {
 	Loop:
 		for {
@@ -117,6 +135,4 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 	// Send the error-returning task to the worker
 	taskChan <- errorTask
 	time.Sleep(10 * time.Millisecond) // Sleep to let the task propagate
-
-	// TODO: test execution with nil error
 }
