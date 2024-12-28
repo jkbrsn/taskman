@@ -144,20 +144,19 @@ func (d *Dispatcher) AddJob(job Job) error {
 // Creates and returns a randomized ID, used for the Job.
 func (d *Dispatcher) AddTask(task Task, cadence time.Duration) (string, error) {
 	jobID := strings.Split(uuid.New().String(), "-")[0]
-	job := Job{
+	job := &Job{
 		Tasks:    []Task{task},
 		Cadence:  cadence,
 		ID:       jobID,
 		NextExec: time.Now().Add(cadence),
 	}
-	return jobID, d.AddJob(job)
+	return jobID, d.AddJob(*job)
 }
 
 // AddTasks takes a slice of Task and adds them to the Dispatcher in a Job.
 // Creates and returns a randomized ID, used for the Job.
 func (d *Dispatcher) AddTasks(tasks []Task, cadence time.Duration) (string, error) {
 	jobID := strings.Split(uuid.New().String(), "-")[0]
-	log.Debug().Msgf("Adding job with %d tasks with group ID '%s' and cadence %v", len(tasks), jobID, cadence)
 
 	// The job uses a copy of the tasks slice, to avoid unintended consequences if the original slice is modified
 	job := &Job{

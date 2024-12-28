@@ -440,7 +440,8 @@ func TestConcurrentAddTask(t *testing.T) {
 			for j := 0; j < numTasksPerGoroutine; j++ {
 				taskID := fmt.Sprintf("task-%d-%d", id, j)
 				task := MockTask{ID: taskID, cadence: 100 * time.Millisecond}
-				dispatcher.AddTask(task, task.cadence)
+				_, err := dispatcher.AddTask(task, task.cadence)
+				assert.NoError(t, err, "Error adding task concurrently")
 			}
 		}(i)
 	}
@@ -449,7 +450,6 @@ func TestConcurrentAddTask(t *testing.T) {
 
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
-	// TODO: fix detected race condition, once detected only 1999/2000 jobs in queue below
 	assert.Equal(t, expectedTasks, dispatcher.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobsInQueue())
 }
 
@@ -472,9 +472,7 @@ func TestConcurrentAddJob(t *testing.T) {
 				jobID := fmt.Sprintf("task-%d-%d", id, j)
 				job := getMockedJob(1, jobID, 200*time.Millisecond)
 				err := dispatcher.AddJob(job)
-				if err != nil {
-					log.Error().Err(err).Msg("Error adding job")
-				}
+				assert.NoError(t, err, "Error adding job concurrently")
 			}
 		}(i)
 	}
@@ -483,7 +481,6 @@ func TestConcurrentAddJob(t *testing.T) {
 
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
-	// TODO: fix detected race condition, once detected only 1999/2000 jobs in queue below
 	assert.Equal(t, expectedTasks, dispatcher.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, dispatcher.jobsInQueue())
 }
 
