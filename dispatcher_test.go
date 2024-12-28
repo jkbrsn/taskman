@@ -183,7 +183,7 @@ func TestAddJob(t *testing.T) {
 	defer dispatcher.Stop()
 
 	job := getMockedJob(2, "test-job", 100*time.Millisecond)
-	jobID, err := dispatcher.AddJob(job)
+	err := dispatcher.AddJob(job)
 	if err != nil {
 		t.Fatalf("Error adding job: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestAddJob(t *testing.T) {
 	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
 	scheduledJob := dispatcher.jobQueue[0]
 	assert.Equal(t, len(job.Tasks), len(scheduledJob.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
-	assert.Equal(t, job.ID, scheduledJob.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
+	assert.Equal(t, job.ID, scheduledJob.ID, "Expected job ID to be %s, got %s", scheduledJob.ID, job.ID)
 }
 
 func TestRemoveJob(t *testing.T) {
@@ -200,24 +200,24 @@ func TestRemoveJob(t *testing.T) {
 	defer dispatcher.Stop()
 
 	job := getMockedJob(2, "someJob", 100*time.Millisecond)
-	jobID, err := dispatcher.AddJob(job)
+	err := dispatcher.AddJob(job)
 	assert.Nil(t, err, "Error adding job")
 
 	// Assert that the job was added
 	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
 	qJob := dispatcher.jobQueue[0]
-	assert.Equal(t, jobID, qJob.ID, "Expected job ID to be %s, got %s", jobID, qJob.ID)
+	assert.Equal(t, job.ID, qJob.ID, "Expected job ID to be %s, got %s", job.ID, qJob.ID)
 	assert.Equal(t, 2, len(qJob.Tasks), "Expected job to have 2 tasks, got %d", len(qJob.Tasks))
 
 	// Remove the job
-	err = dispatcher.RemoveJob(jobID)
+	err = dispatcher.RemoveJob(job.ID)
 	assert.Nil(t, err, "Error removing job")
 
 	// Assert that the job was removed
 	assert.Equal(t, 0, dispatcher.jobsInQueue(), "Expected job queue length to be 0, got %d", dispatcher.jobsInQueue())
 
 	// Try removing the job once more
-	err = dispatcher.RemoveJob(jobID)
+	err = dispatcher.RemoveJob(job.ID)
 	assert.Equal(t, ErrJobNotFound, err, "Expected removal of non-existent job to produce ErrJobNotFound")
 }
 
@@ -227,7 +227,7 @@ func TestReplaceJob(t *testing.T) {
 
 	// Add a job
 	firstJob := getMockedJob(2, "aJobID", 100*time.Millisecond)
-	_, err := dispatcher.AddJob(firstJob)
+	err := dispatcher.AddJob(firstJob)
 	assert.Nil(t, err, "Error adding job")
 	// Assert job added
 	assert.Equal(t, 1, dispatcher.jobsInQueue(), "Expected job queue length to be 1, got %d", dispatcher.jobsInQueue())
@@ -475,7 +475,7 @@ func TestConcurrentAddJob(t *testing.T) {
 			for j := 0; j < numTasksPerGoroutine; j++ {
 				jobID := fmt.Sprintf("task-%d-%d", id, j)
 				job := getMockedJob(1, jobID, 200*time.Millisecond)
-				_, err := dispatcher.AddJob(job)
+				err := dispatcher.AddJob(job)
 				if err != nil {
 					log.Error().Err(err).Msg("Error adding job")
 				}

@@ -78,17 +78,18 @@ type Job struct {
 }
 
 // AddFunc takes a function and adds it to the Dispatcher in a Job.
-// Returns the resultings job's ID.
+// Creates and returns a randomized ID, used for the Job.
 // Note: wraps the function in a BasicTask.
 func (d *Dispatcher) AddFunc(function func() error, cadence time.Duration) (string, error) {
 	task := BasicTask{function}
+	jobID := strings.Split(uuid.New().String(), "-")[0]
 	job := Job{
 		Tasks:    []Task{task},
 		Cadence:  cadence,
-		ID:       strings.Split(uuid.New().String(), "-")[0],
+		ID:       jobID,
 		NextExec: time.Now().Add(cadence),
 	}
-	return d.AddJob(job)
+	return jobID, d.AddJob(job)
 }
 
 // AddJob adds a job to the Dispatcher. A job is a group of tasks that are scheduled
@@ -99,11 +100,11 @@ func (d *Dispatcher) AddFunc(function func() error, cadence time.Duration) (stri
 // - Job must have at least one task
 // - NextExec must be non-zero
 // - Job must have an ID, unique within the Dispatcher
-func (d *Dispatcher) AddJob(job Job) (string, error) {
+func (d *Dispatcher) AddJob(job Job) error {
 	// Validate the job
 	err := d.validateJob(job)
 	if err != nil {
-		return "", err
+		return err
 	}
 	log.Debug().Msgf("Adding job with %d tasks with group ID '%s' and cadence %v", len(job.Tasks), job.ID, job.Cadence)
 
@@ -112,7 +113,7 @@ func (d *Dispatcher) AddJob(job Job) (string, error) {
 	case <-d.ctx.Done():
 		// If the dispatcher is stopped, do not continue adding the job
 		log.Debug().Msg("Dispatcher is stopped, not adding job")
-		return "", ErrDispatcherStopped
+		return ErrDispatcherStopped
 	default:
 		// Do nothing if the dispatcher isn't stopped
 	}
@@ -136,26 +137,25 @@ func (d *Dispatcher) AddJob(job Job) (string, error) {
 		}
 	}
 
-	// TODO: return ID, or something else?
-	return job.ID, nil
+	return nil
 }
 
 // AddTask takes a Task and adds it to the Dispatcher in a Job.
-// Returns the resultings job's ID.
+// Creates and returns a randomized ID, used for the Job.
 func (d *Dispatcher) AddTask(task Task, cadence time.Duration) (string, error) {
+	jobID := strings.Split(uuid.New().String(), "-")[0]
 	job := Job{
 		Tasks:    []Task{task},
 		Cadence:  cadence,
-		ID:       strings.Split(uuid.New().String(), "-")[0],
+		ID:       jobID,
 		NextExec: time.Now().Add(cadence),
 	}
-	return d.AddJob(job)
+	return jobID, d.AddJob(job)
 }
 
 // AddTasks takes a slice of Task and adds them to the Dispatcher in a Job.
-// Returns the resultings job's ID.
+// Creates and returns a randomized ID, used for the Job.
 func (d *Dispatcher) AddTasks(tasks []Task, cadence time.Duration) (string, error) {
-	// Generate a 12 char random ID as the job ID
 	jobID := strings.Split(uuid.New().String(), "-")[0]
 	log.Debug().Msgf("Adding job with %d tasks with group ID '%s' and cadence %v", len(tasks), jobID, cadence)
 
@@ -166,7 +166,7 @@ func (d *Dispatcher) AddTasks(tasks []Task, cadence time.Duration) (string, erro
 		ID:       jobID,
 		NextExec: time.Now().Add(cadence),
 	}
-	return d.AddJob(*job)
+	return jobID, d.AddJob(*job)
 }
 
 // RemoveJob removes a job from the Dispatcher.
