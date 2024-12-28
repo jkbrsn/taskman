@@ -237,7 +237,12 @@ func (d *Dispatcher) consumeErrorChan() {
 		select {
 		case err := <-d.errorChan:
 			if d.externalErr.Load() {
-				// External ownership started; internal consumption stops
+				log.Debug().Err(err).Msg("External caller taking control of error consumption")
+				// Resend the error to the external listener
+				go func(e error) {
+					d.errorChan <- e
+				}(err)
+				// Close the internal consumer
 				return
 			}
 			// Handle error internally (e.g., log it)

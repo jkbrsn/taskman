@@ -2,6 +2,7 @@ package taskman
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -59,9 +60,6 @@ func getMockedJob(nTasks int, jobID string, cadence time.Duration) Job {
 	}
 	return job
 }
-
-// TODO: write test comparing what happens when different channel types are used for taskChan
-// TODO: write a test for error consumption on the errorChan, both internally and when handed over to the caller
 
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
@@ -330,7 +328,6 @@ func TestTaskRescheduling(t *testing.T) {
 	mu.Unlock()
 }
 
-// TODO: clean test up, removing some logs
 func TestAddTaskDuringExecution(t *testing.T) {
 	dispatcher := NewDispatcher(10, 1, 1)
 	defer dispatcher.Stop()
@@ -566,4 +563,53 @@ func TestValidateJob(t *testing.T) {
 	duplicateJob := alreadyPresentJob
 	err = dispatcher.validateJob(duplicateJob)
 	assert.ErrorIs(t, err, ErrDuplicateJobID, "Expected to find duplicate job ID")
+}
+
+func TestErrorChannel(t *testing.T) {
+	dispatcher := NewDispatcher(10, 1, 1)
+	defer dispatcher.Stop()
+
+	// Simulate errors being sent to the error channel
+	go func() {
+		dispatcher.errorChan <- errors.New("internal error 1")
+		dispatcher.errorChan <- errors.New("internal error 2")
+		time.Sleep(5 * time.Millisecond) // Allow some time for errors to propagate
+	}()
+
+	// Verify internal consumption by ensuring no errors remain after consumption
+	time.Sleep(15 * time.Millisecond) // Allow internal consumer to log errors
+
+	// Attempt to call ErrorChannel and transition ownership to the caller
+	errCh, err := dispatcher.ErrorChannel()
+	assert.NoError(t, err, "Expected no error when calling ErrorChannel")
+	assert.NotNil(t, errCh, "ErrorChannel should return a valid channel")
+
+	// Send additional errors after ownership transition
+	go func() {
+		dispatcher.errorChan <- errors.New("external error 1")
+		dispatcher.errorChan <- errors.New("external error 2")
+	}()
+
+	// Consume errors from the external ErrorChannel
+	receivedErrors := []string{}
+	timeout := time.After(50 * time.Millisecond)
+
+Loop:
+	for {
+		select {
+		case err, ok := <-errCh:
+			if !ok {
+				break Loop // Channel closed
+			}
+			receivedErrors = append(receivedErrors, err.Error())
+		case <-timeout:
+			break Loop // Avoid infinite loop in case of test failure
+		}
+	}
+
+	// Validate that the correct errors were received after transition
+	assert.Contains(t, receivedErrors, "external error 1")
+	assert.Contains(t, receivedErrors, "external error 2")
+	assert.NotContains(t, receivedErrors, "internal error 1", "Errors logged internally should not appear")
+	assert.NotContains(t, receivedErrors, "internal error 2", "Errors logged internally should not appear")
 }
