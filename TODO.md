@@ -4,6 +4,7 @@
 
 - better readme
 - complete in-code TODO:s
+- rename dispatcher -> manager
 - ensure basic test coverage
 - align function docs and error returns across package
 
