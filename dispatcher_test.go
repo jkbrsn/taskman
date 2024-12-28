@@ -18,13 +18,16 @@ type MockTask struct {
 	ID      string
 	cadence time.Duration
 
-	executeFunc func()
+	executeFunc func() error
 }
 
 func (mt MockTask) Execute() error {
 	log.Debug().Msgf("Executing MockTask with ID: %s", mt.ID)
 	if mt.executeFunc != nil {
-		mt.executeFunc()
+		err := mt.executeFunc()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -94,8 +97,9 @@ func TestDispatcherStop(t *testing.T) {
 
 	// Attempt to add a task after stopping
 	testChan := make(chan bool)
-	testTask := MockTask{ID: "a-task", cadence: 50 * time.Millisecond, executeFunc: func() {
+	testTask := MockTask{ID: "a-task", cadence: 50 * time.Millisecond, executeFunc: func() error {
 		testChan <- true
+		return nil
 	}}
 	dispatcher.AddTask(testTask, testTask.cadence)
 
@@ -267,10 +271,11 @@ func TestTaskExecution(t *testing.T) {
 	testTask := &MockTask{
 		ID:      "test-execution-task",
 		cadence: 100 * time.Millisecond,
-		executeFunc: func() {
+		executeFunc: func() error {
 			log.Debug().Msg("Executing TestTaskExecution task")
 			executionTimes <- time.Now()
 			wg.Done()
+			return nil
 		},
 	}
 
@@ -298,10 +303,11 @@ func TestTaskRescheduling(t *testing.T) {
 	mockTask := &MockTask{
 		ID:      "test-rescheduling-task",
 		cadence: 100 * time.Millisecond,
-		executeFunc: func() {
+		executeFunc: func() error {
 			mu.Lock()
 			executionTimes = append(executionTimes, time.Now())
 			mu.Unlock()
+			return nil
 		},
 	}
 
@@ -350,30 +356,32 @@ func TestAddTaskDuringExecution(t *testing.T) {
 	testTask1 := &MockTask{
 		ID:      "test-add-mid-execution-task-1",
 		cadence: 15 * time.Millisecond,
-		executeFunc: func() {
+		executeFunc: func() error {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			default:
 				task1Executed <- struct{}{}
 				mu.Lock()
 				trackTasks["task1"] = true
 				mu.Unlock()
 			}
+			return nil
 		},
 	}
 	testTask2 := &MockTask{
 		ID:      "test-add-mid-execution-task-2",
 		cadence: 10 * time.Millisecond,
-		executeFunc: func() {
+		executeFunc: func() error {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			default:
 				mu.Lock()
 				trackTasks["task2"] = true
 				mu.Unlock()
 			}
+			return nil
 		},
 	}
 
@@ -484,8 +492,9 @@ func TestZeroCadenceTask(t *testing.T) {
 	defer dispatcher.Stop()
 
 	testChan := make(chan bool)
-	testTask := MockTask{ID: "zero-cadence-task", cadence: 0, executeFunc: func() {
+	testTask := MockTask{ID: "zero-cadence-task", cadence: 0, executeFunc: func() error {
 		testChan <- true
+		return nil
 	}}
 	dispatcher.AddTask(testTask, testTask.cadence)
 
@@ -557,7 +566,7 @@ func TestValidateJob(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDuplicateJobID, "Expected to find duplicate job ID")
 }
 
-func TestErrorChannel(t *testing.T) {
+func TestErrorChannelConsumption(t *testing.T) {
 	dispatcher := NewDispatcher(10, 1, 1)
 	defer dispatcher.Stop()
 

@@ -196,8 +196,10 @@ func (d *Dispatcher) ReplaceJob(newJob Job) error {
 	return nil
 }
 
-// ErrorChannel returns a read-only channel for consuming errors from task execution.
-// Calling this transfers responsibility for consuming errors to the caller.
+// ErrorChannel returns a read-only channel for consuming errors from task execution. Calling this
+// transfers responsibility to consume errors to the caller, which is expected to keep doing so
+// until the Dispatcher has completely stopped. Not consuming errors may lead to a block in the
+// worker pool.
 func (d *Dispatcher) ErrorChannel() (<-chan error, error) {
 	if !d.externalErr.CompareAndSwap(false, true) {
 		return nil, errors.New("ErrorChannel can only be called once, returning nil")

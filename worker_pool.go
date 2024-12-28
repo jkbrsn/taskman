@@ -42,10 +42,10 @@ func (wp *workerPool) startWorker(id int) {
 			wp.workersActive.Add(1) // Increment active workers
 			err := task.Execute()
 			if err != nil {
-				// No retry policy is implemented, we just log the error for now
+				// No retry policy is implemented, we just log and send the error for now
 				log.Debug().Err(err).Msgf("Worker %d: task execution failed", id)
+				wp.errorChan <- err
 			}
-			wp.errorChan <- err
 			wp.workersActive.Add(-1) // Decrement active workers
 			log.Debug().Msgf("Worker %d: finished task", id)
 		case <-wp.stopChan:
