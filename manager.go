@@ -59,7 +59,7 @@ type BasicTask struct {
 	Function func() error
 }
 
-// Execure executes the function and returns the error.
+// Execute executes the function and returns the error.
 func (f BasicTask) Execute() error {
 	err := f.Function()
 	return err
@@ -405,7 +405,7 @@ func NewManager() *Manager {
 	return s
 }
 
-// NewManager creates, starts and returns a new Manager using custom values for some of the
+// NewManagerCustom creates, starts and returns a new Manager using custom values for some of the
 // task manager parameters.
 func NewManagerCustom(workerCount, taskBufferSize, errorBufferSize int) *Manager {
 	errorChan := make(chan error, errorBufferSize)
