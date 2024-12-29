@@ -3,15 +3,13 @@
 ## to do before 0.1.0
 
 - better readme
-- complete in-code TODO:s
-- rename dispatcher -> manager
 - ensure basic test coverage
 - align function docs and error returns across package
 
 ## to do later
 
 - dynamic scaleup and scaledown of the number of workers
-  - add a dispatcher method to calculate a recommended worker count based on the job queue, taking into account the "widest" jobs and job frequency
+  - add a manager method to calculate a recommended worker count based on the job queue, taking into account the "widest" jobs and job frequency
     - the pool should probably hold at least 2 x the number of workers needed to handle the widest job, but look up a formula to calculate this
   - add a method to add workers to the pool post start
   - add a method to remove workers from the pool

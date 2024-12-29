@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	// ErrDispatcherStopped is returned when a task is added to a stopped dispatcher.
-	ErrDispatcherStopped = errors.New("dispatcher is stopped")
+	// ErrManagerStopped is returned when a task is added to a stopped manager.
+	ErrManagerStopped = errors.New("manager is stopped")
 	// ErrDuplicateJobID is returned when a duplicate job ID is found.
 	ErrDuplicateJobID = errors.New("duplicate job ID")
 	// ErrInvalidCadence is returned when a job has an invalid cadence.
@@ -28,18 +28,18 @@ var (
 	ErrZeroNextExec = errors.New("job NextExec time must be non-zero")
 )
 
-// Dispatcher manages task scheduling and execution.
+// Manager manages task scheduling and execution.
 // It dispatches scheduled jobs to a worker pool for execution.
-type Dispatcher struct {
+type Manager struct {
 	sync.RWMutex
 
-	ctx      context.Context    // Context for the dispatcher
-	cancel   context.CancelFunc // Cancel function for the dispatcher
+	ctx      context.Context    // Context for the manager
+	cancel   context.CancelFunc // Cancel function for the manager
 	runDone  chan struct{}      // Channel to signal run has stopped
 	stopOnce sync.Once          // Ensures Stop is only called once
 
-	newTaskChan chan bool // Channel to signal that new tasks have entered the queue
-	taskChan    chan Task // Channel to send tasks to the worker pool
+	newJobChan chan bool // Channel to signal that new tasks have entered the queue
+	taskChan   chan Task // Channel to send tasks to the worker pool
 
 	jobQueue priorityQueue // A priority queue to hold the scheduled jobs
 
@@ -60,13 +60,13 @@ type BasicTask struct {
 	Function func() error
 }
 
-// Execure executes the function and returns the eventual error.
+// Execure executes the function and returns the error.
 func (f BasicTask) Execute() error {
 	err := f.Function()
 	return err
 }
 
-// Job describes when to execute a specific group of tasks.
+// Job is responsible for a group of tasks, and when to execute them.
 type Job struct {
 	Cadence time.Duration
 	Tasks   []Task
@@ -77,30 +77,31 @@ type Job struct {
 	index int // Index within the heap
 }
 
-// AddFunc takes a function and adds it to the Dispatcher in a Job.
-// Creates and returns a randomized ID, used for the Job.
+// ScheduleFunc takes a function and adds it to the Manager in a Job. Creates and returns a
+// randomized ID, used to identify the Job within the manager.
 // Note: wraps the function in a BasicTask.
-func (d *Dispatcher) AddFunc(function func() error, cadence time.Duration) (string, error) {
+func (d *Manager) ScheduleFunc(function func() error, cadence time.Duration) (string, error) {
 	task := BasicTask{function}
 	jobID := strings.Split(uuid.New().String(), "-")[0]
+
 	job := Job{
 		Tasks:    []Task{task},
 		Cadence:  cadence,
 		ID:       jobID,
 		NextExec: time.Now().Add(cadence),
 	}
-	return jobID, d.AddJob(job)
+
+	return jobID, d.ScheduleJob(job)
 }
 
-// AddJob adds a job to the Dispatcher. A job is a group of tasks that are scheduled
-// to execute together. The function returns a job ID that can be used to remove
-// the job from the Dispatcher.
+// ScheduleJob adds a job to the Manager. A job is a group of tasks that are scheduled to execute
+// together. The function returns a job ID that can be used to identify the job within the Manager.
 // Job requirements:
 // - Cadence must be greater than 0
 // - Job must have at least one task
-// - NextExec must be non-zero
-// - Job must have an ID, unique within the Dispatcher
-func (d *Dispatcher) AddJob(job Job) error {
+// - NextExec must be non-zero and positive
+// - Job must have an ID, unique within the Manager
+func (d *Manager) ScheduleJob(job Job) error {
 	d.Lock()
 	defer d.Unlock()
 
@@ -111,27 +112,27 @@ func (d *Dispatcher) AddJob(job Job) error {
 	}
 	log.Debug().Msgf("Adding job with %d tasks with ID '%s' and cadence %v", len(job.Tasks), job.ID, job.Cadence)
 
-	// Check if the dispatcher is stopped
+	// Check if the manager is stopped
 	select {
 	case <-d.ctx.Done():
-		// If the dispatcher is stopped, do not continue adding the job
-		log.Debug().Msg("Dispatcher is stopped, not adding job")
-		return ErrDispatcherStopped
+		// If the manager is stopped, do not continue adding the job
+		log.Debug().Msg("Manager is stopped, not adding job")
+		return ErrManagerStopped
 	default:
-		// Do nothing if the dispatcher isn't stopped
+		// Do nothing if the manager isn't stopped
 	}
 
 	// Push the job to the queue
 	heap.Push(&d.jobQueue, &job)
 
-	// Signal the dispatcher to check for new tasks
+	// Signal the manager to check for new tasks
 	select {
 	case <-d.ctx.Done():
-		// Do nothing if the dispatcher is stopped
-		log.Debug().Msg("Dispatcher is stopped, not signaling new task")
+		// Do nothing if the manager is stopped
+		log.Debug().Msg("Manager is stopped, not signaling new task")
 	default:
 		select {
-		case d.newTaskChan <- true:
+		case d.newJobChan <- true:
 			log.Trace().Msg("Signaled new job added")
 		default:
 			// Do nothing if no one is listening
@@ -141,47 +142,49 @@ func (d *Dispatcher) AddJob(job Job) error {
 	return nil
 }
 
-// AddTask takes a Task and adds it to the Dispatcher in a Job.
-// Creates and returns a randomized ID, used for the Job.
-func (d *Dispatcher) AddTask(task Task, cadence time.Duration) (string, error) {
+// ScheduleTask takes a Task and adds it to the Manager in a Job. Creates and returns a randomized
+// ID, used to identify the Job within the manager.
+func (d *Manager) ScheduleTask(task Task, cadence time.Duration) (string, error) {
 	jobID := strings.Split(uuid.New().String(), "-")[0]
-	job := &Job{
+
+	job := Job{
 		Tasks:    append([]Task(nil), []Task{task}...),
 		Cadence:  cadence,
 		ID:       jobID,
 		NextExec: time.Now().Add(cadence),
 	}
-	err := d.AddJob(*job)
-	return jobID, err
+
+	return jobID, d.ScheduleJob(job)
 }
 
-// AddTasks takes a slice of Task and adds them to the Dispatcher in a Job.
-// Creates and returns a randomized ID, used for the Job.
-func (d *Dispatcher) AddTasks(tasks []Task, cadence time.Duration) (string, error) {
+// ScheduleTasks takes a slice of Task and adds them to the Manager in a Job. Creates and returns a
+// randomized ID, used to identify the Job within the manager.
+func (d *Manager) ScheduleTasks(tasks []Task, cadence time.Duration) (string, error) {
 	jobID := strings.Split(uuid.New().String(), "-")[0]
 
-	// The job uses a copy of the tasks slice, to avoid unintended consequences if the original slice is modified
-	job := &Job{
+	// Takes a copy of the tasks, avoiding unintended consequences if the slice is modified
+	job := Job{
 		Tasks:    append([]Task(nil), tasks...),
 		Cadence:  cadence,
 		ID:       jobID,
 		NextExec: time.Now().Add(cadence),
 	}
-	return jobID, d.AddJob(*job)
+
+	return jobID, d.ScheduleJob(job)
 }
 
-// RemoveJob removes a job from the Dispatcher.
-func (d *Dispatcher) RemoveJob(jobID string) error {
+// RemoveJob removes a job from the Manager.
+func (d *Manager) RemoveJob(jobID string) error {
 	d.Lock()
 	defer d.Unlock()
 
 	return d.jobQueue.RemoveByID(jobID)
 }
 
-// ReplaceJob replaces a job in the Dispatcher's queue with a new job, based on
+// ReplaceJob replaces a job in the Manager's queue with a new job, based on
 // their ID:s matching. The new job's NextExec will be overwritten by the old
-// job's, to preserve the Dispatcher's schedule.
-func (d *Dispatcher) ReplaceJob(newJob Job) error {
+// job's, to preserve the Manager's schedule.
+func (d *Manager) ReplaceJob(newJob Job) error {
 	d.Lock()
 	defer d.Unlock()
 
@@ -199,9 +202,9 @@ func (d *Dispatcher) ReplaceJob(newJob Job) error {
 
 // ErrorChannel returns a read-only channel for consuming errors from task execution. Calling this
 // transfers responsibility to consume errors to the caller, which is expected to keep doing so
-// until the Dispatcher has completely stopped. Not consuming errors may lead to a block in the
+// until the Manager has completely stopped. Not consuming errors may lead to a block in the
 // worker pool.
-func (d *Dispatcher) ErrorChannel() (<-chan error, error) {
+func (d *Manager) ErrorChannel() (<-chan error, error) {
 	if !d.externalErr.CompareAndSwap(false, true) {
 		return nil, errors.New("ErrorChannel can only be called once, returning nil")
 
@@ -209,12 +212,12 @@ func (d *Dispatcher) ErrorChannel() (<-chan error, error) {
 	return d.errorChan, nil
 }
 
-// Stop signals the Dispatcher to stop processing tasks and exit.
-// Note: blocks until the Dispatcher, including all workers, has completely stopped.
-func (d *Dispatcher) Stop() {
-	log.Debug().Msg("Attempting dispatcher stop")
+// Stop signals the Manager to stop processing tasks and exit.
+// Note: blocks until the Manager, including all workers, has completely stopped.
+func (d *Manager) Stop() {
+	log.Debug().Msg("Attempting manager stop")
 	d.stopOnce.Do(func() {
-		// Signal the dispatcher to stop
+		// Signal the manager to stop
 		d.cancel()
 
 		// Stop the worker pool
@@ -225,16 +228,16 @@ func (d *Dispatcher) Stop() {
 		<-d.workerPoolDone
 
 		// Close the remaining channels
-		close(d.newTaskChan)
+		close(d.newJobChan)
 		close(d.errorChan)
 		close(d.taskChan)
 
-		log.Debug().Msg("Dispatcher stopped")
+		log.Debug().Msg("Manager stopped")
 	})
 }
 
 // consumeErrorChan handles errors until ErrorChannel() is called.
-func (d *Dispatcher) consumeErrorChan() {
+func (d *Manager) consumeErrorChan() {
 	for {
 		select {
 		case err := <-d.errorChan:
@@ -258,18 +261,18 @@ func (d *Dispatcher) consumeErrorChan() {
 }
 
 // jobsInQueue returns the length of the jobQueue slice.
-func (d *Dispatcher) jobsInQueue() int {
+func (d *Manager) jobsInQueue() int {
 	d.Lock()
 	defer d.Unlock()
 
 	return d.jobQueue.Len()
 }
 
-// run runs the Dispatcher.
+// run runs the Manager.
 // This function is intended to be run as a goroutine.
-func (d *Dispatcher) run() {
+func (d *Manager) run() {
 	defer func() {
-		log.Debug().Msg("Dispatcher run loop exiting")
+		log.Debug().Msg("Manager run loop exiting")
 		close(d.runDone)
 	}()
 	for {
@@ -277,11 +280,11 @@ func (d *Dispatcher) run() {
 		if d.jobQueue.Len() == 0 {
 			d.Unlock()
 			select {
-			case <-d.newTaskChan:
-				log.Trace().Msg("New task added, checking for next job")
+			case <-d.newJobChan:
+				log.Trace().Msg("New job added, checking for next job")
 				continue
 			case <-d.ctx.Done():
-				log.Info().Msg("Dispatcher received stop signal, exiting run loop")
+				log.Info().Msg("Manager received stop signal, exiting run loop")
 				return
 			}
 		} else {
@@ -289,15 +292,15 @@ func (d *Dispatcher) run() {
 			now := time.Now()
 			delay := nextJob.NextExec.Sub(now)
 			if delay <= 0 {
-				log.Debug().Msgf("Executing job %s", nextJob.ID)
+				log.Debug().Msgf("Dispatching job %s", nextJob.ID)
 				heap.Pop(&d.jobQueue)
 				d.Unlock()
 
-				// Execute all tasks in the job
+				// Dispatch all tasks in the job to the worker pool for execution
 				for _, task := range nextJob.Tasks {
 					select {
 					case <-d.ctx.Done():
-						log.Info().Msg("Dispatcher received stop signal during task dispatch, exiting run loop")
+						log.Info().Msg("Manager received stop signal during task dispatch, exiting run loop")
 						return
 					case d.taskChan <- task:
 						// Successfully sent the task
@@ -319,7 +322,7 @@ func (d *Dispatcher) run() {
 				// Time to execute the next job
 				continue
 			case <-d.ctx.Done():
-				log.Info().Msg("Dispatcher received stop signal during wait, exiting run loop")
+				log.Info().Msg("Manager received stop signal during wait, exiting run loop")
 				return
 			}
 		}
@@ -328,7 +331,7 @@ func (d *Dispatcher) run() {
 
 // validateJob validates a Job.
 // Note: does not acquire a mutex lock for accessing the jobQueue, that is up to the caller.
-func (d *Dispatcher) validateJob(job Job) error {
+func (d *Manager) validateJob(job Job) error {
 	// Jobs with cadence <= 0 are invalid, as such jobs would execute immediately and continuously
 	// and risk overwhelming the worker pool.
 	if job.Cadence <= 0 {
@@ -349,20 +352,20 @@ func (d *Dispatcher) validateJob(job Job) error {
 	return nil
 }
 
-// NewDispatcher creates, starts and returns a new Dispatcher.
-func NewDispatcher(workerCount, taskBufferSize, errorBufferSize int) *Dispatcher {
+// NewManager creates, starts and returns a new Manager.
+func NewManager(workerCount, taskBufferSize, errorBufferSize int) *Manager {
 	errorChan := make(chan error, errorBufferSize)
 	taskChan := make(chan Task, taskBufferSize)
 	workerPoolDone := make(chan struct{})
 	workerPool := newWorkerPool(workerCount, errorChan, taskChan, workerPoolDone)
-	s := newDispatcher(workerPool, taskChan, errorChan, workerPoolDone)
+	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
 	return s
 }
 
-// newDispatcher creates a new Dispatcher.
+// newManager creates a new Manager.
 // The internal constructor pattern allows for dependency injection of internal components.
-func newDispatcher(workerPool *workerPool, taskChan chan Task, errorChan chan error, workerPoolDone chan struct{}) *Dispatcher {
-	log.Debug().Msg("Creating new dispatcher")
+func newManager(workerPool *workerPool, taskChan chan Task, errorChan chan error, workerPoolDone chan struct{}) *Manager {
+	log.Debug().Msg("Creating new manager")
 
 	// Input validation
 	if workerPool == nil {
@@ -377,11 +380,11 @@ func newDispatcher(workerPool *workerPool, taskChan chan Task, errorChan chan er
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	d := &Dispatcher{
+	d := &Manager{
 		ctx:            ctx,
 		cancel:         cancel,
 		jobQueue:       make(priorityQueue, 0),
-		newTaskChan:    make(chan bool, 1),
+		newJobChan:     make(chan bool, 1),
 		errorChan:      errorChan,
 		runDone:        make(chan struct{}),
 		taskChan:       taskChan,
@@ -391,7 +394,7 @@ func newDispatcher(workerPool *workerPool, taskChan chan Task, errorChan chan er
 
 	heap.Init(&d.jobQueue)
 
-	log.Debug().Msg("Starting dispatcher")
+	log.Debug().Msg("Starting manager")
 	d.workerPool.start()
 	go d.run()
 	go d.consumeErrorChan()
