@@ -130,4 +130,62 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 	wg.Wait() // Don't exit the test until the error has been received
 }
 
-// TODO: write test for the case when tasks are sent while all workers are busy (take into consideration future dynamic worker creation)
+func TestWorkerPoolBusyWorkers(t *testing.T) {
+	errorChan := make(chan error, 1)
+	taskChan := make(chan Task, 1)
+	workerPoolDone := make(chan struct{})
+	pool := newWorkerPool(2, errorChan, taskChan, workerPoolDone)
+	defer pool.stop()
+
+	// Start the workers
+	pool.start()
+	time.Sleep(10 * time.Millisecond) // Wait for workers to start
+
+	// Create tasks that will keep workers busy
+	task1 := &MockTask{
+		executeFunc: func() error {
+			time.Sleep(50 * time.Millisecond)
+			return nil
+		},
+		ID: "task-1",
+	}
+	task2 := &MockTask{
+		executeFunc: func() error {
+			time.Sleep(50 * time.Millisecond)
+			return nil
+		},
+		ID: "task-2",
+	}
+
+	// Send tasks to the workers
+	taskChan <- task1
+	taskChan <- task2
+	time.Sleep(5 * time.Millisecond) // Wait for workers to pick up tasks
+
+	// Verify active workers during task execution
+	assert.Equal(t, int32(2), pool.activeWorkers(), "Expected 2 active workers")
+
+	// Create another task to be queued
+	task3 := &MockTask{
+		executeFunc: func() error {
+			time.Sleep(50 * time.Millisecond)
+			return nil
+		},
+		ID: "task-3",
+	}
+
+	// Send the third task while workers are busy
+	taskChan <- task3
+	time.Sleep(5 * time.Millisecond) // Allow some time for task to be queued
+
+	// Verify that the third task is queued and not yet executed
+	assert.Equal(t, int32(2), pool.activeWorkers(), "Expected 2 active workers")
+	assert.Equal(t, 1, len(taskChan), "Expected 1 task in the queue")
+
+	// Wait for the first two tasks to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify that the third task is now being executed
+	assert.Equal(t, int32(1), pool.activeWorkers(), "Expected 1 active worker")
+	assert.Equal(t, 0, len(taskChan), "Expected no tasks in the queue")
+}
