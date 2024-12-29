@@ -4,12 +4,11 @@ import (
 	"container/heap"
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
 )
 
@@ -94,7 +93,7 @@ func (d *Manager) ErrorChannel() (<-chan error, error) {
 // Note: wraps the function in a BasicTask.
 func (d *Manager) ScheduleFunc(function func() error, cadence time.Duration) (string, error) {
 	task := BasicTask{function}
-	jobID := strings.Split(uuid.New().String(), "-")[0]
+	jobID := xid.New().String()
 
 	job := Job{
 		Tasks:    []Task{task},
@@ -157,7 +156,7 @@ func (d *Manager) ScheduleJob(job Job) error {
 // ScheduleTask takes a Task and adds it to the Manager in a Job. Creates and returns a randomized
 // ID, used to identify the Job within the manager.
 func (d *Manager) ScheduleTask(task Task, cadence time.Duration) (string, error) {
-	jobID := strings.Split(uuid.New().String(), "-")[0]
+	jobID := xid.New().String()
 
 	job := Job{
 		Tasks:    append([]Task(nil), []Task{task}...),
@@ -172,7 +171,7 @@ func (d *Manager) ScheduleTask(task Task, cadence time.Duration) (string, error)
 // ScheduleTasks takes a slice of Task and adds them to the Manager in a Job. Creates and returns a
 // randomized ID, used to identify the Job within the manager.
 func (d *Manager) ScheduleTasks(tasks []Task, cadence time.Duration) (string, error) {
-	jobID := strings.Split(uuid.New().String(), "-")[0]
+	jobID := xid.New().String()
 
 	// Takes a copy of the tasks, avoiding unintended consequences if the slice is modified
 	job := Job{
@@ -193,9 +192,8 @@ func (d *Manager) RemoveJob(jobID string) error {
 	return d.jobQueue.RemoveByID(jobID)
 }
 
-// ReplaceJob replaces a job in the Manager's queue with a new job, based on
-// their ID:s matching. The new job's NextExec will be overwritten by the old
-// job's, to preserve the Manager's schedule.
+// ReplaceJob replaces a job in the Manager's queue with a new job, based on their ID:s matching.
+// The new job's NextExec will be overwritten by the old job's, to preserve the Manager's schedule.
 func (d *Manager) ReplaceJob(newJob Job) error {
 	d.Lock()
 	defer d.Unlock()

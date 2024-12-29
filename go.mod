@@ -3,7 +3,7 @@ module github.com/jakobilobi/go-taskman
 go 1.23.2
 
 require (
-	github.com/google/uuid v1.6.0
+	github.com/rs/xid v1.6.0
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.10.0
 )
