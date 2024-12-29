@@ -353,7 +353,25 @@ func (d *Manager) validateJob(job Job) error {
 }
 
 // NewManager creates, starts and returns a new Manager.
-func NewManager(workerCount, taskBufferSize, errorBufferSize int) *Manager {
+func NewManager() *Manager {
+	var workerCount, taskBufferSize, errorBufferSize int
+	workerCount = 32
+	taskBufferSize = 64
+	errorBufferSize = 64
+
+	errorChan := make(chan error, errorBufferSize)
+	taskChan := make(chan Task, taskBufferSize)
+	workerPoolDone := make(chan struct{})
+
+	workerPool := newWorkerPool(workerCount, errorChan, taskChan, workerPoolDone)
+	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
+
+	return s
+}
+
+// NewManager creates, starts and returns a new Manager using custom values for some of the
+// task manager parameters.
+func NewManagerCustom(workerCount, taskBufferSize, errorBufferSize int) *Manager {
 	errorChan := make(chan error, errorBufferSize)
 	taskChan := make(chan Task, taskBufferSize)
 	workerPoolDone := make(chan struct{})
@@ -362,8 +380,7 @@ func NewManager(workerCount, taskBufferSize, errorBufferSize int) *Manager {
 	return s
 }
 
-// newManager creates a new Manager.
-// The internal constructor pattern allows for dependency injection of internal components.
+// newManager creates, initializes, and starts a new Manager.
 func newManager(workerPool *workerPool, taskChan chan Task, errorChan chan error, workerPoolDone chan struct{}) *Manager {
 	log.Debug().Msg("Creating new manager")
 

@@ -8,6 +8,7 @@
 
 ## to do later
 
+- revisist default values of `NewManager`, e.g. channel buffer sizes
 - dynamic scaleup and scaledown of the number of workers
   - add a manager method to calculate a recommended worker count based on the job queue, taking into account the "widest" jobs and job frequency
     - the pool should probably hold at least 2 x the number of workers needed to handle the widest job, but look up a formula to calculate this
