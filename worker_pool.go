@@ -21,6 +21,26 @@ type workerPool struct {
 	wg sync.WaitGroup
 }
 
+// activeWorkers returns the number of active workers.
+func (wp *workerPool) activeWorkers() int32 {
+	return wp.workersActive.Load()
+}
+
+// runningWorkers returns the number of running workers.
+func (wp *workerPool) runningWorkers() int32 {
+	return wp.workersRunning.Load()
+}
+
+// start starts the worker pool by creating the pool's workers and starting each of them in their
+// own goroutine.
+func (wp *workerPool) start() {
+	log.Info().Msgf("Starting worker pool with %d workers", wp.workersTotal)
+	wp.wg.Add(wp.workersTotal)
+	for i := 0; i < wp.workersTotal; i++ {
+		go wp.startWorker(i)
+	}
+}
+
 // startWorker executes tasks from the task channel.
 func (wp *workerPool) startWorker(id int) {
 	log.Debug().Msgf("Starting worker %d", id)
@@ -54,25 +74,6 @@ func (wp *workerPool) startWorker(id int) {
 	}
 }
 
-// activeWorkers returns the number of active workers.
-func (wp *workerPool) activeWorkers() int32 {
-	return wp.workersActive.Load()
-}
-
-// runningWorkers returns the number of running workers.
-func (wp *workerPool) runningWorkers() int32 {
-	return wp.workersRunning.Load()
-}
-
-// start starts the worker pool, creating workers according to wp.WorkerCount.
-func (wp *workerPool) start() {
-	log.Info().Msgf("Starting worker pool with %d workers", wp.workersTotal)
-	wp.wg.Add(wp.workersTotal)
-	for i := 0; i < wp.workersTotal; i++ {
-		go wp.startWorker(i)
-	}
-}
-
 // stop signals the worker pool to stop processing tasks and exit.
 func (wp *workerPool) stop() {
 	log.Debug().Msg("Attempting worker pool stop")
@@ -83,6 +84,7 @@ func (wp *workerPool) stop() {
 	close(wp.workerPoolDone) // Signal worker pool is done
 }
 
+// newWorkerPool creates and returns a new workerPool.
 func newWorkerPool(workersTotal int, errorChan chan error, taskChan chan Task, workerPoolDone chan struct{}) *workerPool {
 	return &workerPool{
 		errorChan:      errorChan,

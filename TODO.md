@@ -3,8 +3,6 @@
 ## to do before 0.1.0
 
 - better readme
-- ensure basic test coverage
-- align function docs and error returns across package
 
 ## to do later
 
@@ -26,4 +24,6 @@
   - Attach a context to a task, so that it can be cancelled and controlled in other ways
 - Cron-like expressions for scheduling jobs. This would allow for more complex scheduling patterns than just a simple interval.
 - Custom consumers for jobs. If the same app wants to run jobs in the same pool that are different enough that they require different consumers, the app should be able to provide the option to have a custom consumer for each job.
--A broadcast function, with a fan-out pattern, to send results to multiple channels in parallel.
+- A broadcast function, with a fan-out pattern, to send results to multiple channels in parallel.
+- Mirror the priority queue contents in a map, avoiding having to touch the queue, and thus reducing number of accesses, for anything but Push Pop Fix Update.
+  - Would require a pairing of map adjustments with any queue alteration, resulting in more maintenance.

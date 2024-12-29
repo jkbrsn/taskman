@@ -77,6 +77,18 @@ type Job struct {
 	index int // Index within the heap
 }
 
+// ErrorChannel returns a read-only channel for consuming errors from task execution. Calling this
+// transfers responsibility to consume errors to the caller, which is expected to keep doing so
+// until the Manager has completely stopped. Not consuming errors may lead to a block in the
+// worker pool.
+func (d *Manager) ErrorChannel() (<-chan error, error) {
+	if !d.externalErr.CompareAndSwap(false, true) {
+		return nil, errors.New("ErrorChannel can only be called once, returning nil")
+
+	}
+	return d.errorChan, nil
+}
+
 // ScheduleFunc takes a function and adds it to the Manager in a Job. Creates and returns a
 // randomized ID, used to identify the Job within the manager.
 // Note: wraps the function in a BasicTask.
@@ -200,18 +212,6 @@ func (d *Manager) ReplaceJob(newJob Job) error {
 	return nil
 }
 
-// ErrorChannel returns a read-only channel for consuming errors from task execution. Calling this
-// transfers responsibility to consume errors to the caller, which is expected to keep doing so
-// until the Manager has completely stopped. Not consuming errors may lead to a block in the
-// worker pool.
-func (d *Manager) ErrorChannel() (<-chan error, error) {
-	if !d.externalErr.CompareAndSwap(false, true) {
-		return nil, errors.New("ErrorChannel can only be called once, returning nil")
-
-	}
-	return d.errorChan, nil
-}
-
 // Stop signals the Manager to stop processing tasks and exit.
 // Note: blocks until the Manager, including all workers, has completely stopped.
 func (d *Manager) Stop() {
@@ -269,7 +269,6 @@ func (d *Manager) jobsInQueue() int {
 }
 
 // run runs the Manager.
-// This function is intended to be run as a goroutine.
 func (d *Manager) run() {
 	defer func() {
 		log.Debug().Msg("Manager run loop exiting")
@@ -352,34 +351,6 @@ func (d *Manager) validateJob(job Job) error {
 	return nil
 }
 
-// NewManager creates, starts and returns a new Manager.
-func NewManager() *Manager {
-	var workerCount, taskBufferSize, errorBufferSize int
-	workerCount = 32
-	taskBufferSize = 64
-	errorBufferSize = 64
-
-	errorChan := make(chan error, errorBufferSize)
-	taskChan := make(chan Task, taskBufferSize)
-	workerPoolDone := make(chan struct{})
-
-	workerPool := newWorkerPool(workerCount, errorChan, taskChan, workerPoolDone)
-	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
-
-	return s
-}
-
-// NewManager creates, starts and returns a new Manager using custom values for some of the
-// task manager parameters.
-func NewManagerCustom(workerCount, taskBufferSize, errorBufferSize int) *Manager {
-	errorChan := make(chan error, errorBufferSize)
-	taskChan := make(chan Task, taskBufferSize)
-	workerPoolDone := make(chan struct{})
-	workerPool := newWorkerPool(workerCount, errorChan, taskChan, workerPoolDone)
-	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
-	return s
-}
-
 // newManager creates, initializes, and starts a new Manager.
 func newManager(workerPool *workerPool, taskChan chan Task, errorChan chan error, workerPoolDone chan struct{}) *Manager {
 	log.Debug().Msg("Creating new manager")
@@ -417,4 +388,32 @@ func newManager(workerPool *workerPool, taskChan chan Task, errorChan chan error
 	go d.consumeErrorChan()
 
 	return d
+}
+
+// NewManager creates, starts and returns a new Manager.
+func NewManager() *Manager {
+	var workerCount, taskBufferSize, errorBufferSize int
+	workerCount = 32
+	taskBufferSize = 64
+	errorBufferSize = 64
+
+	errorChan := make(chan error, errorBufferSize)
+	taskChan := make(chan Task, taskBufferSize)
+	workerPoolDone := make(chan struct{})
+
+	workerPool := newWorkerPool(workerCount, errorChan, taskChan, workerPoolDone)
+	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
+
+	return s
+}
+
+// NewManager creates, starts and returns a new Manager using custom values for some of the
+// task manager parameters.
+func NewManagerCustom(workerCount, taskBufferSize, errorBufferSize int) *Manager {
+	errorChan := make(chan error, errorBufferSize)
+	taskChan := make(chan Task, taskBufferSize)
+	workerPoolDone := make(chan struct{})
+	workerPool := newWorkerPool(workerCount, errorChan, taskChan, workerPoolDone)
+	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
+	return s
 }

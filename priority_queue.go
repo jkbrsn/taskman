@@ -46,8 +46,8 @@ func (pq *priorityQueue) Pop() interface{} {
 
 // Custom functionality
 
-// JobInQueue finds whether a job with the jobID is currently in the queue,
-// returns the job's index if found.
+// JobInQueue finds whether a job with the jobID is currently in the queue, and returns the job's
+// index if found.
 func (pq *priorityQueue) JobInQueue(jobID string) (int, error) {
 	for _, job := range *pq {
 		if job.ID == jobID {
@@ -76,7 +76,7 @@ func (pq *priorityQueue) RemoveByID(jobID string) error {
 	return ErrJobNotFound
 }
 
-// Update modifies the NextExec of a job in the heap.
+// Update modifies the NextExec time of a job in the heap.
 func (pq *priorityQueue) Update(job *Job, newNextExec time.Time) {
 	job.NextExec = newNextExec
 	heap.Fix(pq, job.index)
