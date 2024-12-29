@@ -77,7 +77,7 @@ func (pq *priorityQueue) RemoveByID(jobID string) error {
 }
 
 // Update modifies the NextExec of a job in the heap.
-func (pq *priorityQueue) Update(job *Job, nextExec time.Time) {
-	job.NextExec = nextExec
+func (pq *priorityQueue) Update(job *Job, newNextExec time.Time) {
+	job.NextExec = newNextExec
 	heap.Fix(pq, job.index)
 }

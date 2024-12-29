@@ -70,4 +70,20 @@ func TestRemoveByID(t *testing.T) {
 	assert.Equal(t, 1, pq.Len(), "Expected queue length to be 1 after removal")
 }
 
-// TODO: write test for Update
+func TestUpdate(t *testing.T) {
+	pq := &priorityQueue{}
+	heap.Init(pq)
+
+	job1 := &Job{ID: "job1", NextExec: time.Now().Add(10 * time.Second)}
+	job2 := &Job{ID: "job2", NextExec: time.Now().Add(5 * time.Second)}
+	heap.Push(pq, job1)
+	heap.Push(pq, job2)
+
+	// Update job1 to have an earlier NextExec time than job2
+	newNextExec := time.Now().Add(1 * time.Second)
+	// Call Update to heap.Fix the queue, placing job1 on top
+	pq.Update(job1, newNextExec)
+
+	assert.Equal(t, "job1", pq.Peek().ID, "Expected job1 to be peeked first after update")
+	assert.Equal(t, newNextExec, pq.Peek().NextExec, "Expected job1 to have updated NextExec time")
+}
