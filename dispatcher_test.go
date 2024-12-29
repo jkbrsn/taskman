@@ -45,7 +45,7 @@ func getChannelBufferSize(ch interface{}) int {
 }
 
 // Helper function to get a Job with mocked tasks.
-func getMockedJob(nTasks int, jobID string, cadence time.Duration) Job {
+func getMockedJob(nTasks int, jobID string, cadence, timeToNextExec time.Duration) Job {
 	var mockTasks []MockTask
 	for i := 0; i < nTasks; i++ {
 		mockTasks = append(mockTasks, MockTask{ID: fmt.Sprintf("task-%d", i), cadence: cadence})
@@ -58,7 +58,7 @@ func getMockedJob(nTasks int, jobID string, cadence time.Duration) Job {
 	job := Job{
 		Cadence:  cadence,
 		ID:       jobID,
-		NextExec: time.Now().Add(100 * time.Millisecond),
+		NextExec: time.Now().Add(timeToNextExec),
 		Tasks:    tasks,
 	}
 	return job
@@ -184,7 +184,7 @@ func TestAddJob(t *testing.T) {
 	dispatcher := NewDispatcher(10, 2, 1)
 	defer dispatcher.Stop()
 
-	job := getMockedJob(2, "test-job", 100*time.Millisecond)
+	job := getMockedJob(2, "test-job", 100*time.Millisecond, 100*time.Millisecond)
 	err := dispatcher.AddJob(job)
 	if err != nil {
 		t.Fatalf("Error adding job: %v", err)
@@ -201,7 +201,7 @@ func TestRemoveJob(t *testing.T) {
 	dispatcher := NewDispatcher(10, 2, 1)
 	defer dispatcher.Stop()
 
-	job := getMockedJob(2, "someJob", 100*time.Millisecond)
+	job := getMockedJob(2, "someJob", 100*time.Millisecond, 100*time.Millisecond)
 	err := dispatcher.AddJob(job)
 	assert.Nil(t, err, "Error adding job")
 
@@ -228,7 +228,7 @@ func TestReplaceJob(t *testing.T) {
 	defer dispatcher.Stop()
 
 	// Add a job
-	firstJob := getMockedJob(2, "aJobID", 100*time.Millisecond)
+	firstJob := getMockedJob(2, "aJobID", 100*time.Millisecond, 100*time.Millisecond)
 	err := dispatcher.AddJob(firstJob)
 	assert.Nil(t, err, "Error adding job")
 	// Assert job added
@@ -237,7 +237,7 @@ func TestReplaceJob(t *testing.T) {
 	assert.Equal(t, firstJob.ID, qJob.ID, "Expected ID to be '%s', got '%s'", firstJob.ID, qJob.ID)
 
 	// Replace the first job
-	secondJob := getMockedJob(4, "aJobID", 50*time.Millisecond)
+	secondJob := getMockedJob(4, "aJobID", 50*time.Millisecond, 100*time.Millisecond)
 	err = dispatcher.ReplaceJob(secondJob)
 	assert.Nil(t, err, "Error replacing job")
 	// Assert that the job was replaced in the queue
@@ -252,7 +252,7 @@ func TestReplaceJob(t *testing.T) {
 	assert.Equal(t, len(secondJob.Tasks), len(qJob.Tasks), "Expected job to have %d tasks, got %d", len(secondJob.Tasks), len(qJob.Tasks))
 
 	// Try to replace a non-existing job
-	thirdJob := getMockedJob(2, "anotherJobID", 10*time.Millisecond)
+	thirdJob := getMockedJob(2, "anotherJobID", 10*time.Millisecond, 100*time.Millisecond)
 	err = dispatcher.ReplaceJob(thirdJob)
 	assert.Equal(t, ErrJobNotFound, err, "Expected replace attempt of non-existent job to produce ErrJobNotFound")
 }
@@ -431,7 +431,7 @@ func TestConcurrentAddTask(t *testing.T) {
 
 	var wg sync.WaitGroup
 	numGoroutines := 20
-	numTasksPerGoroutine := 100
+	numTasksPerGoroutine := 250
 
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
@@ -439,7 +439,8 @@ func TestConcurrentAddTask(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < numTasksPerGoroutine; j++ {
 				taskID := fmt.Sprintf("task-%d-%d", id, j)
-				task := MockTask{ID: taskID, cadence: 100 * time.Millisecond}
+				// Use a long cadence to avoid task execution before test ends, as this changes the queue length
+				task := MockTask{ID: taskID, cadence: 2 * time.Second}
 				_, err := dispatcher.AddTask(task, task.cadence)
 				assert.NoError(t, err, "Error adding task concurrently")
 			}
@@ -462,7 +463,7 @@ func TestConcurrentAddJob(t *testing.T) {
 
 	var wg sync.WaitGroup
 	numGoroutines := 20
-	numTasksPerGoroutine := 100
+	numTasksPerGoroutine := 250
 
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
@@ -470,7 +471,8 @@ func TestConcurrentAddJob(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < numTasksPerGoroutine; j++ {
 				jobID := fmt.Sprintf("task-%d-%d", id, j)
-				job := getMockedJob(1, jobID, 200*time.Millisecond)
+				// Use a long cadence to avoid job execution before test ends, as this changes the queue length
+				job := getMockedJob(1, jobID, 100*time.Millisecond, 2*time.Second)
 				err := dispatcher.AddJob(job)
 				assert.NoError(t, err, "Error adding job concurrently")
 			}

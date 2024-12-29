@@ -101,12 +101,15 @@ func (d *Dispatcher) AddFunc(function func() error, cadence time.Duration) (stri
 // - NextExec must be non-zero
 // - Job must have an ID, unique within the Dispatcher
 func (d *Dispatcher) AddJob(job Job) error {
+	d.Lock()
+	defer d.Unlock()
+
 	// Validate the job
 	err := d.validateJob(job)
 	if err != nil {
 		return err
 	}
-	log.Debug().Msgf("Adding job with %d tasks with group ID '%s' and cadence %v", len(job.Tasks), job.ID, job.Cadence)
+	log.Debug().Msgf("Adding job with %d tasks with ID '%s' and cadence %v", len(job.Tasks), job.ID, job.Cadence)
 
 	// Check if the dispatcher is stopped
 	select {
@@ -119,9 +122,7 @@ func (d *Dispatcher) AddJob(job Job) error {
 	}
 
 	// Push the job to the queue
-	d.Lock()
 	heap.Push(&d.jobQueue, &job)
-	d.Unlock()
 
 	// Signal the dispatcher to check for new tasks
 	select {
@@ -145,12 +146,13 @@ func (d *Dispatcher) AddJob(job Job) error {
 func (d *Dispatcher) AddTask(task Task, cadence time.Duration) (string, error) {
 	jobID := strings.Split(uuid.New().String(), "-")[0]
 	job := &Job{
-		Tasks:    []Task{task},
+		Tasks:    append([]Task(nil), []Task{task}...),
 		Cadence:  cadence,
 		ID:       jobID,
 		NextExec: time.Now().Add(cadence),
 	}
-	return jobID, d.AddJob(*job)
+	err := d.AddJob(*job)
+	return jobID, err
 }
 
 // AddTasks takes a slice of Task and adds them to the Dispatcher in a Job.
@@ -325,6 +327,7 @@ func (d *Dispatcher) run() {
 }
 
 // validateJob validates a Job.
+// Note: does not acquire a mutex lock for accessing the jobQueue, that is up to the caller.
 func (d *Dispatcher) validateJob(job Job) error {
 	// Jobs with cadence <= 0 are invalid, as such jobs would execute immediately and continuously
 	// and risk overwhelming the worker pool.
@@ -340,8 +343,6 @@ func (d *Dispatcher) validateJob(job Job) error {
 		return ErrZeroNextExec
 	}
 	// Job ID:s are unique, so duplicates are not allowed to be added.
-	d.Lock()
-	defer d.Unlock()
 	if _, ok := d.jobQueue.JobInQueue(job.ID); ok == nil {
 		return ErrDuplicateJobID
 	}
