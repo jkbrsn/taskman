@@ -129,3 +129,5 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 	taskChan <- errorTask
 	wg.Wait() // Don't exit the test until the error has been received
 }
+
+// TODO: write test for the case when tasks are sent while all workers are busy (take into consideration future dynamic worker creation)
