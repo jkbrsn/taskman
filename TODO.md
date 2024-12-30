@@ -1,10 +1,6 @@
 # to-do list for the go-taskman package
 
-## to do before 0.1.0
-
-- better readme
-
-## to do later
+## to do for 0.2.0
 
 - revisist default values of `NewManager`, e.g. channel buffer sizes
 - dynamic scaleup and scaledown of the number of workers
@@ -13,6 +9,7 @@
   - add a method to add workers to the pool post start
   - add a method to remove workers from the pool
 - add an option to execute a job directly when inserted and after that at the regular cadence
+  - may already be achievable by setting NextExec = time.Now but should be confirmed and documented
 - add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
 - add an option to instantly execute a job in the queue, even though it has some time until next execution
   - use heap.Fix to reposition the job in the heap, https://cs.opensource.google/go/go/+/refs/tags/go1.23.4:src/container/heap/heap.go;l=83
