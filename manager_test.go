@@ -121,11 +121,12 @@ func TestScheduleFunc(t *testing.T) {
 	manager := NewManagerCustom(10, 2, 1)
 	defer manager.Stop()
 
-	function := func() error {
-		return nil
-	}
-	cadence := 100 * time.Millisecond
-	jobID, err := manager.ScheduleFunc(function, cadence)
+	jobID, err := manager.ScheduleFunc(
+		func() error {
+			return nil
+		},
+		100*time.Millisecond,
+	)
 	if err != nil {
 		t.Fatalf("Error adding function: %v", err)
 	}
