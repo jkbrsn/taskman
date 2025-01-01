@@ -65,4 +65,4 @@ err := manager.ScheduleJob(job)
 
 ## Contributing
 
-For contributions, please open a GitHub issue with your questions and suggestions.
+For contributions, please open a GitHub issue with your questions and suggestions. Before submitting an issue, have a look at the existing [TODO list](TODO.md) to see if your idea is already in the works.

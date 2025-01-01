@@ -1,6 +1,6 @@
-# to-do list for the go-taskman package
+# Plans for the go-taskman package
 
-## to do for 0.2.0
+## TODO v0.2.0
 
 - revisist default values of `NewManager`, e.g. channel buffer sizes
 - dynamic scaleup and scaledown of the number of workers
@@ -8,11 +8,20 @@
     - the pool should probably hold at least 2 x the number of workers needed to handle the widest job, but look up a formula to calculate this
   - add a method to add workers to the pool post start
   - add a method to remove workers from the pool
+
+## TODO v0.3.0
+
 - add an option to execute a job directly when inserted and after that at the regular cadence
   - may already be achievable by setting NextExec = time.Now but should be confirmed and documented
 - add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
 - add an option to instantly execute a job in the queue, even though it has some time until next execution
   - use heap.Fix to reposition the job in the heap, https://cs.opensource.google/go/go/+/refs/tags/go1.23.4:src/container/heap/heap.go;l=83
+- figure out how to handle panics in the worker goroutines
+  - should the worker crash or recover?
+  - should the job be marked as failed and be dumped?
+  - or should the job be retried next cadence?
+- add a method to pause/stop a job
+  - could involve removing it from the queue, to an external list, and then reinserting it when it should be resumed
 
 # feature ideas
 
