@@ -29,21 +29,13 @@ func TestWorkerPoolStartStop(t *testing.T) {
 		pool.stop()
 
 		// Verify worker counts post-stop
-		assert.Equal(t, 4, pool.workersTotal, "Expected worker count to be 4")
 		assert.Equal(t, int32(0), pool.activeWorkers(), "Expected no active workers")
 		assert.Equal(t, int32(0), pool.runningWorkers(), "Expected no running workers")
 	}()
 
-	// Verify worker counts pre-start
-	assert.Equal(t, 4, pool.workersTotal, "Expected worker count to be 4")
-	assert.Equal(t, int32(0), pool.activeWorkers(), "Expected no active workers")
-	assert.Equal(t, int32(0), pool.runningWorkers(), "Expected no running workers")
-
-	pool.start()
-	time.Sleep(20 * time.Millisecond) // Wait for workers to start
+	time.Sleep(10 * time.Millisecond) // Wait for workers to start
 
 	// Verify worker counts post-start
-	assert.Equal(t, 4, pool.workersTotal, "Expected worker count to be 4")
 	assert.Equal(t, int32(0), pool.activeWorkers(), "Expected no active workers")
 	assert.Equal(t, int32(4), pool.runningWorkers(), "Expected 4 running workers")
 }
@@ -55,8 +47,6 @@ func TestWorkerPoolTaskExecution(t *testing.T) {
 	pool := newWorkerPool(1, errorChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
-	// Start the worker
-	pool.start()
 	time.Sleep(10 * time.Millisecond) // Wait for worker to start
 
 	// Create a task
@@ -97,8 +87,6 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 	pool := newWorkerPool(1, errorChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
-	// Start the worker
-	pool.start()
 	time.Sleep(10 * time.Millisecond) // Wait for worker to start
 
 	// Create a task which produces an error
@@ -137,8 +125,6 @@ func TestWorkerPoolBusyWorkers(t *testing.T) {
 	pool := newWorkerPool(2, errorChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
-	// Start the workers
-	pool.start()
 	time.Sleep(10 * time.Millisecond) // Wait for workers to start
 
 	// Create tasks that will keep workers busy

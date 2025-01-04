@@ -4,6 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
 )
 
@@ -11,7 +12,6 @@ import (
 type workerPool struct {
 	workersActive  atomic.Int32 // Number of active workers
 	workersRunning atomic.Int32 // Number of running workers
-	workersTotal   int          // Total number of workers in the pool
 
 	errorChan      chan<- error  // Send-only channel for errors
 	stopChan       chan struct{} // Channel to signal stopping the worker pool
@@ -31,19 +31,19 @@ func (wp *workerPool) runningWorkers() int32 {
 	return wp.workersRunning.Load()
 }
 
-// start starts the worker pool by creating the pool's workers and starting each of them in their
-// own goroutine.
-func (wp *workerPool) start() {
-	log.Info().Msgf("Starting worker pool with %d workers", wp.workersTotal)
-	wp.wg.Add(wp.workersTotal)
-	for i := 0; i < wp.workersTotal; i++ {
-		go wp.startWorker(i)
+// addWorkers adds to the worker pool by starting new workers.
+func (wp *workerPool) addWorkers(nWorkers int) {
+	log.Info().Msgf("Adding %d new workers to the pool", nWorkers)
+	wp.wg.Add(nWorkers)
+	for i := 0; i < nWorkers; i++ {
+		workerID := xid.New().String()
+		go wp.startWorker(workerID)
 	}
 }
 
 // startWorker executes tasks from the task channel.
-func (wp *workerPool) startWorker(id int) {
-	log.Debug().Msgf("Starting worker %d", id)
+func (wp *workerPool) startWorker(id string) {
+	log.Debug().Msgf("Starting worker %s", id)
 	wp.workersRunning.Add(1)
 	defer func() {
 		wp.workersRunning.Add(-1)
@@ -54,21 +54,21 @@ func (wp *workerPool) startWorker(id int) {
 		select {
 		case task, ok := <-wp.taskChan:
 			if !ok {
-				log.Debug().Msgf("Worker %d: task channel closed, exiting", id)
+				log.Debug().Msgf("Worker %s: task channel closed, exiting", id)
 				return
 			}
-			log.Debug().Msgf("Worker %d executing task", id)
+			log.Debug().Msgf("Worker %s executing task", id)
 			wp.workersActive.Add(1) // Increment active workers
 			err := task.Execute()
 			if err != nil {
 				// No retry policy is implemented, we just log and send the error for now
-				log.Debug().Err(err).Msgf("Worker %d: task execution failed", id)
+				log.Debug().Err(err).Msgf("Worker %s: task execution failed", id)
 				wp.errorChan <- err
 			}
 			wp.workersActive.Add(-1) // Decrement active workers
-			log.Debug().Msgf("Worker %d: finished task", id)
+			log.Debug().Msgf("Worker %s: finished task", id)
 		case <-wp.stopChan:
-			log.Debug().Msgf("Worker %d: received stop signal, exiting", id)
+			log.Debug().Msgf("Worker %s: received stop signal, exiting", id)
 			return
 		}
 	}
@@ -84,13 +84,14 @@ func (wp *workerPool) stop() {
 	close(wp.workerPoolDone) // Signal worker pool is done
 }
 
-// newWorkerPool creates and returns a new workerPool.
-func newWorkerPool(workersTotal int, errorChan chan error, taskChan chan Task, workerPoolDone chan struct{}) *workerPool {
-	return &workerPool{
+// newWorkerPool creates and returns a new worker pool.
+func newWorkerPool(initialWorkers int, errorChan chan error, taskChan chan Task, workerPoolDone chan struct{}) *workerPool {
+	pool := &workerPool{
 		errorChan:      errorChan,
 		stopChan:       make(chan struct{}),
 		taskChan:       taskChan,
 		workerPoolDone: workerPoolDone,
-		workersTotal:   workersTotal,
 	}
+	pool.addWorkers(initialWorkers)
+	return pool
 }

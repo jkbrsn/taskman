@@ -8,7 +8,6 @@
   - add a manager method to calculate a recommended worker count based on the job queue, taking into account the "widest" jobs and job frequency
     - the pool should probably hold at least 2 x the number of workers needed to handle the widest job, but look up a formula to calculate this
     - may need to add a metrics collector to the manager to keep track of job execution times, job/task width, execution frequency and perhaps more
-  - add a method to add workers to the pool post start
   - add a method to remove workers from the pool
 
 ## TODO v0.3.0
