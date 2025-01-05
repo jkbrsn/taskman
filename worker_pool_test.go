@@ -16,8 +16,8 @@ func TestNewWorkerPool(t *testing.T) {
 	pool := newWorkerPool(10, errorChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
-	// Verify stopChan initialization
-	assert.NotNil(t, pool.stopChan, "Expected stop channel to be non-nil")
+	// Verify stopPoolChan initialization
+	assert.NotNil(t, pool.stopPoolChan, "Expected stop channel to be non-nil")
 }
 
 func TestWorkerPoolStartStop(t *testing.T) {
@@ -174,4 +174,67 @@ func TestWorkerPoolBusyWorkers(t *testing.T) {
 	// Verify that the third task is now being executed
 	assert.Equal(t, int32(1), pool.activeWorkers(), "Expected 1 active worker")
 	assert.Equal(t, 0, len(taskChan), "Expected no tasks in the queue")
+}
+
+func TestWorkerStop(t *testing.T) {
+	errorChan := make(chan error, 1)
+	taskChan := make(chan Task, 1)
+	workerPoolDone := make(chan struct{})
+	pool := newWorkerPool(2, errorChan, taskChan, workerPoolDone)
+	defer pool.stop()
+
+	time.Sleep(10 * time.Millisecond) // Wait for workers to start
+
+	// Confirm running workers
+	assert.Equal(t, int32(2), pool.runningWorkers(), "Expected 2 running workers")
+
+	// Get idle workers
+	idleWorkers := pool.idleWorkers()
+	assert.Equal(t, 2, len(idleWorkers), "Expected 2 idle workers")
+
+	// Stop one of the workers
+	pool.stopWorker(idleWorkers[0])
+	time.Sleep(10 * time.Millisecond) // Wait for worker to stop
+
+	// Confirm running workers after stopping one
+	assert.Equal(t, int32(1), pool.runningWorkers(), "Expected 1 running worker")
+	assert.Equal(t, 1, len(pool.idleWorkers()), "Expected 1 idle worker")
+
+	// Add a task to the remaining worker that will keep it busy
+	task := &MockTask{
+		executeFunc: func() error {
+			time.Sleep(20 * time.Millisecond)
+			return nil
+		},
+		ID: "task-1",
+	}
+	taskChan <- task
+	time.Sleep(5 * time.Millisecond) // Wait for worker to pick up task
+
+	// Verify active workers during task execution
+	assert.Equal(t, int32(1), pool.activeWorkers(), "Expected 1 active worker")
+
+	// Stop the remaining worker
+	pool.stopWorker(idleWorkers[1])
+	time.Sleep(5 * time.Millisecond) // Wait for stop to take effect
+
+	// Confirm worker hasn't stopped during execution
+	assert.Equal(t, int32(1), pool.runningWorkers(), "Expected 1 running workers")
+	activeWorkerAny, ok := pool.workers.Load(idleWorkers[1])
+	assert.True(t, ok, "Expected worker to be found")
+	activeWorkerTyped, ok := activeWorkerAny.(*workerInfo)
+	assert.True(t, ok, "Expected worker to be of type *workerInfo")
+	assert.True(t, activeWorkerTyped.busy.Load(), "Expected worker to be busy")
+
+	// Verify worker stops after executing task
+	time.Sleep(20 * time.Millisecond) // Wait for worker to execute task
+	assert.Equal(t, int32(0), pool.runningWorkers(), "Expected 0 running workers")
+
+	// Ensure no errors were reported
+	select {
+	case err := <-errorChan:
+		t.Fatalf("Unexpected error: %v", err)
+	default:
+		// No error
+	}
 }

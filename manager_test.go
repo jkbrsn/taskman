@@ -44,6 +44,13 @@ func getChannelBufferSize(ch interface{}) int {
 	}
 }
 
+func setLoggerLevel(level zerolog.Level) {
+	log.Logger = log.Output(zerolog.ConsoleWriter{
+		Out:        zerolog.SyncWriter(os.Stderr), // Ensures thread safety
+		TimeFormat: "15:04:05.999",
+	}).Level(level)
+}
+
 // Helper function to get a Job with mocked tasks.
 func getMockedJob(nTasks int, jobID string, cadence, timeToNextExec time.Duration) Job {
 	var mockTasks []MockTask
@@ -66,7 +73,7 @@ func getMockedJob(nTasks int, jobID string, cadence, timeToNextExec time.Duratio
 
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.999"}).Level(zerolog.DebugLevel)
+	setLoggerLevel(zerolog.DebugLevel)
 	os.Exit(m.Run())
 }
 
@@ -425,7 +432,7 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 
 func TestConcurrentScheduleTask(t *testing.T) {
 	// Deactivate debug logs for this test
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.999"}).Level(zerolog.InfoLevel)
+	setLoggerLevel(zerolog.InfoLevel)
 
 	manager := NewManagerCustom(10, 1, 1)
 	defer manager.Stop()
@@ -457,7 +464,7 @@ func TestConcurrentScheduleTask(t *testing.T) {
 
 func TestConcurrentScheduleJob(t *testing.T) {
 	// Deactivate debug logs for this test
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.999"}).Level(zerolog.InfoLevel)
+	setLoggerLevel(zerolog.InfoLevel)
 
 	manager := NewManagerCustom(10, 1, 1)
 	defer manager.Stop()
