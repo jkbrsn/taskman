@@ -176,7 +176,7 @@ func TestWorkerPoolBusyWorkers(t *testing.T) {
 	assert.Equal(t, 0, len(taskChan), "Expected no tasks in the queue")
 }
 
-func TestWorkerStop(t *testing.T) {
+func TestStopWorker(t *testing.T) {
 	errorChan := make(chan error, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
@@ -237,4 +237,73 @@ func TestWorkerStop(t *testing.T) {
 	default:
 		// No error
 	}
+}
+
+func TestStopWorkers(t *testing.T) {
+	errorChan := make(chan error, 1)
+	taskChan := make(chan Task, 1)
+	workerPoolDone := make(chan struct{})
+	pool := newWorkerPool(6, errorChan, taskChan, workerPoolDone)
+	defer pool.stop()
+
+	time.Sleep(10 * time.Millisecond) // Wait for workers to start
+
+	// Confirm worker counts
+	assert.Equal(t, 6, len(pool.idleWorkers()), "Expected 6 idle workers")
+	assert.Equal(t, int32(6), pool.runningWorkers(), "Expected 6 running workers")
+
+	// Stop two workers
+	pool.stopWorkers(2)
+	time.Sleep(10 * time.Millisecond) // Wait for workers to stop
+
+	// Confirm worker counts after stopping two workers
+	assert.Equal(t, 4, len(pool.idleWorkers()), "Expected 4 idle workers")
+	assert.Equal(t, int32(4), pool.runningWorkers(), "Expected 4 running workers")
+
+	// Synchronize task completions with a channel
+	taskCompleted := make(chan struct{})
+	// Add three tasks for execution, to make 3/4 workers busy
+	task := &MockTask{
+		executeFunc: func() error {
+			time.Sleep(10 * time.Millisecond) // Simulate task execution
+			taskCompleted <- struct{}{}
+			return nil
+		},
+		ID: "task-1",
+	}
+	for i := 0; i < 3; i++ {
+		taskChan <- task
+	}
+
+	time.Sleep(5 * time.Millisecond) // Wait for workers to pick up tasks
+
+	// Verify active workers during task execution
+	assert.Equal(t, 1, len(pool.idleWorkers()), "Expected 1 idle workers")
+	assert.Equal(t, int32(3), pool.activeWorkers(), "Expected 3 active workers")
+
+	// Stop more workers than there are idle workers available
+	pool.stopWorkers(2)
+	time.Sleep(5 * time.Millisecond) // Wait for idle worker to stop
+
+	// Confirm worker counts again, only 1 worker should have been be stopped
+	assert.Equal(t, 0, len(pool.idleWorkers()), "Expected 0 idle workers")
+	assert.Equal(t, int32(3), pool.activeWorkers(), "Expected 3 active workers")
+	assert.Equal(t, int32(3), pool.runningWorkers(), "Expected 3 running workers")
+
+	// Wait for tasks to complete, which should free up the workers to be stopped
+	for i := 0; i < 3; i++ {
+		<-taskCompleted
+	}
+	time.Sleep(5 * time.Millisecond)
+
+	// Confirm one of the previously busy workers has stopped
+	assert.Equal(t, 2, len(pool.idleWorkers()), "Expected 2 idle workers")
+	assert.Equal(t, int32(2), pool.runningWorkers(), "Expected 2 running workers")
+
+	// Stop more workers than there are workers in the pool
+	pool.stopWorkers(10)
+
+	// Confirm no workers were stopped
+	assert.Equal(t, 2, len(pool.idleWorkers()), "Expected 2 idle workers")
+	assert.Equal(t, int32(2), pool.runningWorkers(), "Expected 2 running workers")
 }

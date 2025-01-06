@@ -59,61 +59,6 @@ func (wp *workerPool) idleWorkers() []xid.ID {
 	return idleWorkers
 }
 
-// removeWorkers removes workers from the pool by stopping them.
-// Note 1: if the number of workers to remove exceeds the number of idle workers the function will
-// send stop signals to busy workers, which will stop after they finish their current task.
-// Note 2: due to the timing of the stop signal, there is a chance that a worker marked as idle
-// will pick up a task before the stop signal is received, in which case the worker will not stop
-// until it finishes the task.
-func (wp *workerPool) removeWorkers(nWorkers int) {
-	wp.mu.Lock() // Lock to prevent race conditions while modifying worker state
-	defer wp.mu.Unlock()
-
-	// Validate number of workers to remove
-	if nWorkers <= 0 || nWorkers > int(wp.runningWorkers()) {
-		log.Warn().Msg("Invalid number of workers to remove")
-		return
-	}
-	log.Debug().Msgf("Removing %d workers from the pool", nWorkers)
-	idleWorkers := wp.idleWorkers()
-
-	// Stop a subset of the idle workers if there is an abundance
-	if len(idleWorkers) >= nWorkers {
-		workersToRemove := idleWorkers[:nWorkers]
-		for _, workerID := range workersToRemove {
-			wp.stopWorker(workerID)
-		}
-		return
-	}
-
-	// Stop all idle workers if there are not enoug of them
-	for _, workerID := range idleWorkers {
-		wp.stopWorker(workerID)
-	}
-
-	// Then stop busy workers as well, up to the number of workers to remove
-	nWorkers -= len(idleWorkers)
-	var busyWorkers []xid.ID
-	for i := 0; i < nWorkers; i++ {
-		wp.workers.Range(func(key, value any) bool {
-			workerID := key.(xid.ID)
-			workerInfo := value.(*workerInfo)
-			// Confirm busy state before stopping, since not all previously stopped idle workers
-			// may have stopped yet
-			if workerInfo.busy.Load() {
-				busyWorkers = append(busyWorkers, workerID)
-				return false
-			}
-			return true
-		})
-	}
-	for _, workerID := range busyWorkers {
-		// TODO: is there a risk that an idle worker will pick up a task before the stop signal is received,
-		// and thus end up in the busyWorkers list? Would risk a panic due to double close of the stop channel.
-		wp.stopWorker(workerID)
-	}
-}
-
 // runningWorkers returns the number of running workers.
 func (wp *workerPool) runningWorkers() int32 {
 	return wp.workersRunning.Load()
@@ -183,7 +128,8 @@ func (wp *workerPool) stop() {
 	close(wp.workerPoolDone) // Signal worker pool is done
 }
 
-// stopWorker signals a specific worker to stop processing tasks and exit.
+// stopWorker signals a specific worker to stop processing tasks and exit. This will also remove
+// the worker from the worker pool.
 // TODO: change to an error return?
 func (wp *workerPool) stopWorker(id xid.ID) {
 	log.Debug().Msgf("Stopping worker %s", id)
@@ -199,6 +145,62 @@ func (wp *workerPool) stopWorker(id xid.ID) {
 	}
 	close(workerInfo.stopChan)
 	log.Debug().Msgf("Stop signal sent for worker %s", id)
+}
+
+// stopWorkers stops workers, which removes them from the pool.
+// Note 1: if the number of workers to stop exceeds the number of idle workers the function will
+// send stop signals to busy workers, which will stop after they finish their current task.
+// Note 2: due to the timing of the stop signal, there is a chance that a worker marked as idle
+// will pick up a task before the stop signal is received, in which case the worker will not stop
+// until it finishes the task.
+func (wp *workerPool) stopWorkers(nWorkers int) {
+	wp.mu.Lock() // Lock to prevent race conditions while modifying worker state
+	defer wp.mu.Unlock()
+
+	// Validate number of workers to remove
+	if nWorkers <= 0 || nWorkers > int(wp.runningWorkers()) {
+		log.Warn().Msg("Invalid number of workers to remove")
+		// TODO: return error?
+		return
+	}
+	log.Debug().Msgf("Removing %d workers from the pool", nWorkers)
+	idleWorkers := wp.idleWorkers()
+
+	// Stop a subset of the idle workers if there is an abundance
+	if len(idleWorkers) >= nWorkers {
+		workersToRemove := idleWorkers[:nWorkers]
+		for _, workerID := range workersToRemove {
+			wp.stopWorker(workerID)
+		}
+		return
+	}
+
+	// Stop all idle workers if there are not enoug of them
+	for _, workerID := range idleWorkers {
+		wp.stopWorker(workerID)
+	}
+
+	// Then stop busy workers as well, up to the number of workers to remove
+	nWorkers -= len(idleWorkers)
+	var busyWorkers []xid.ID
+	for i := 0; i < nWorkers; i++ {
+		wp.workers.Range(func(key, value any) bool {
+			workerID := key.(xid.ID)
+			workerInfo := value.(*workerInfo)
+			// Confirm busy state before stopping, since not all previously stopped idle workers
+			// may have stopped yet
+			if workerInfo.busy.Load() {
+				busyWorkers = append(busyWorkers, workerID)
+				return false
+			}
+			return true
+		})
+	}
+	for _, workerID := range busyWorkers {
+		// TODO: is there a risk that an idle worker will pick up a task before the stop signal is received,
+		// and thus end up in the busyWorkers list? Would risk a panic due to double close of the stop channel.
+		wp.stopWorker(workerID)
+	}
 }
 
 // newWorkerPool creates and returns a new worker pool.
