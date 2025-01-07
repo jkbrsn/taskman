@@ -3,6 +3,7 @@ package taskman
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
@@ -15,8 +16,9 @@ type workerPool struct {
 	workersRunning atomic.Int32 // Number of running workers
 
 	errorChan      chan<- error  // Send-only channel for errors
-	stopPoolChan   chan struct{} // Channel to signal stopping the worker pool
+	execTimeChan   chan<- int64  // Send-only channel for execution times
 	taskChan       <-chan Task   // Receive-only channel for tasks
+	stopPoolChan   chan struct{} // Channel to signal stopping the worker pool
 	workerPoolDone chan struct{} // Channel to signal worker pool is done
 
 	mu sync.Mutex
@@ -95,12 +97,16 @@ func (wp *workerPool) startWorker(id xid.ID) {
 			worker.busy.Store(true)
 			wp.workersActive.Add(1)
 
+			// Execute the task
+			start := time.Now()
 			err := task.Execute()
 			if err != nil {
 				// No retry policy is implemented, we just log and send the error for now
 				log.Debug().Err(err).Msgf("Worker %s: task execution failed", id)
 				wp.errorChan <- err
 			}
+			execTime := time.Since(start).Milliseconds()
+			wp.execTimeChan <- execTime
 
 			// Update worker state
 			worker.busy.Store(false)
@@ -204,13 +210,30 @@ func (wp *workerPool) stopWorkers(nWorkers int) {
 }
 
 // newWorkerPool creates and returns a new worker pool.
-func newWorkerPool(initialWorkers int, errorChan chan error, taskChan chan Task, workerPoolDone chan struct{}) *workerPool {
+func newWorkerPool(initialWorkers int, errorChan chan error, execTimeChan chan int64, taskChan chan Task, workerPoolDone chan struct{}) *workerPool {
 	pool := &workerPool{
 		errorChan:      errorChan,
+		execTimeChan:   execTimeChan,
 		stopPoolChan:   make(chan struct{}),
 		taskChan:       taskChan,
 		workerPoolDone: workerPoolDone,
 	}
 	pool.addWorkers(initialWorkers)
+
+	// TODO: temp goroutine to consume execTimeChan, remove when properly consumed
+	go func() {
+		for {
+			select {
+			case execTime := <-execTimeChan:
+				// Handle error internally (e.g., log it)
+				log.Debug().Msgf("Unhandled exec time received: %d ms", execTime)
+			case <-pool.workerPoolDone:
+				// Only stop consuming once the worker pool is done, since any
+				// remaining workers will need to send errors on errorChan
+				return
+			}
+		}
+	}()
+
 	return pool
 }

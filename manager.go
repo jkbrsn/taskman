@@ -438,16 +438,16 @@ func newManager(workerPool *workerPool, taskChan chan Task, errorChan chan error
 
 // NewManager creates, starts and returns a new Manager.
 func NewManager() *Manager {
-	var initialWorkerCount, taskBufferSize, errorBufferSize int
+	var initialWorkerCount, channelBufferSize int
 	initialWorkerCount = 32
-	taskBufferSize = 64
-	errorBufferSize = 64
+	channelBufferSize = 256
 
-	errorChan := make(chan error, errorBufferSize)
-	taskChan := make(chan Task, taskBufferSize)
+	errorChan := make(chan error, channelBufferSize)
+	execTimeChan := make(chan int64, channelBufferSize)
+	taskChan := make(chan Task, channelBufferSize)
 	workerPoolDone := make(chan struct{})
 
-	workerPool := newWorkerPool(initialWorkerCount, errorChan, taskChan, workerPoolDone)
+	workerPool := newWorkerPool(initialWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
 	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
 
 	return s
@@ -455,11 +455,12 @@ func NewManager() *Manager {
 
 // NewManagerCustom creates, starts and returns a new Manager using custom values for some of the
 // task manager parameters.
-func NewManagerCustom(initialWorkerCount, taskBufferSize, errorBufferSize int) *Manager {
-	errorChan := make(chan error, errorBufferSize)
-	taskChan := make(chan Task, taskBufferSize)
+func NewManagerCustom(initialWorkerCount, channelBufferSize int) *Manager {
+	errorChan := make(chan error, channelBufferSize)
+	execTimeChan := make(chan int64, channelBufferSize)
+	taskChan := make(chan Task, channelBufferSize)
 	workerPoolDone := make(chan struct{})
-	workerPool := newWorkerPool(initialWorkerCount, errorChan, taskChan, workerPoolDone)
+	workerPool := newWorkerPool(initialWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
 	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
 	return s
 }

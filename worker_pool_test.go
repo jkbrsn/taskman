@@ -9,11 +9,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewWorkerPool(t *testing.T) {
+func getWorkerPool(nWorkers int) *workerPool {
 	errorChan := make(chan error, 1)
+	execTimeChan := make(chan int64, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(10, errorChan, taskChan, workerPoolDone)
+	return newWorkerPool(nWorkers, errorChan, execTimeChan, taskChan, workerPoolDone)
+}
+
+func TestNewWorkerPool(t *testing.T) {
+	pool := getWorkerPool(10)
 	defer pool.stop()
 
 	// Verify stopPoolChan initialization
@@ -21,10 +26,7 @@ func TestNewWorkerPool(t *testing.T) {
 }
 
 func TestWorkerPoolStartStop(t *testing.T) {
-	errorChan := make(chan error, 1)
-	taskChan := make(chan Task, 1)
-	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(4, errorChan, taskChan, workerPoolDone)
+	pool := getWorkerPool(4)
 	defer func() {
 		pool.stop()
 
@@ -42,9 +44,10 @@ func TestWorkerPoolStartStop(t *testing.T) {
 
 func TestWorkerPoolTaskExecution(t *testing.T) {
 	errorChan := make(chan error, 1)
+	execTimeChan := make(chan int64, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(1, errorChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(1, errorChan, execTimeChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for worker to start
@@ -82,9 +85,10 @@ func TestWorkerPoolTaskExecution(t *testing.T) {
 
 func TestWorkerPoolExecutionError(t *testing.T) {
 	errorChan := make(chan error, 1)
+	execTimeChan := make(chan int64, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(1, errorChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(1, errorChan, execTimeChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for worker to start
@@ -120,9 +124,10 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 
 func TestWorkerPoolBusyWorkers(t *testing.T) {
 	errorChan := make(chan error, 1)
+	execTimeChan := make(chan int64, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(2, errorChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(2, errorChan, execTimeChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for workers to start
@@ -178,9 +183,10 @@ func TestWorkerPoolBusyWorkers(t *testing.T) {
 
 func TestStopWorker(t *testing.T) {
 	errorChan := make(chan error, 1)
+	execTimeChan := make(chan int64, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(2, errorChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(2, errorChan, execTimeChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for workers to start
@@ -241,9 +247,10 @@ func TestStopWorker(t *testing.T) {
 
 func TestStopWorkers(t *testing.T) {
 	errorChan := make(chan error, 1)
+	execTimeChan := make(chan int64, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(6, errorChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(6, errorChan, execTimeChan, taskChan, workerPoolDone)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for workers to start
