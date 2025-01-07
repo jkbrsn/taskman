@@ -621,3 +621,38 @@ Loop:
 	assert.NotContains(t, receivedErrors, "internal error 1", "Errors logged internally should not appear")
 	assert.NotContains(t, receivedErrors, "internal error 2", "Errors logged internally should not appear")
 }
+
+func TestUpdateTasksStats(t *testing.T) {
+	manager := NewManagerCustom(10, 1, 1)
+	defer manager.Stop()
+
+	// Initial state
+	initialTasksTotal := manager.tasksTotal.Load()
+	initialTasksPerSecond := manager.tasksPerSecond.Load()
+
+	// Update stats with new tasks
+	additionalTasks := 5
+	tasksPerSecond := float32(2.0)
+	manager.updateTasksStats(additionalTasks, tasksPerSecond)
+
+	// Verify the tasksTotal is updated correctly
+	expectedTasksTotal := initialTasksTotal + int64(additionalTasks)
+	assert.Equal(t, expectedTasksTotal, manager.tasksTotal.Load(), "Expected tasksTotal to be %d, got %d", expectedTasksTotal, manager.tasksTotal.Load())
+
+	// Verify the tasksPerSecond is updated correctly
+	expectedTasksPerSecond := initialTasksPerSecond + float32(2.0)
+	assert.InDelta(t, expectedTasksPerSecond, manager.tasksPerSecond.Load(), 0.001, "Expected tasksPerSecond to be %f, got %f", expectedTasksPerSecond, manager.tasksPerSecond.Load())
+
+	// Update stats with another set of tasks
+	additionalTasks = 10
+	tasksPerSecond = float32(3.0)
+	manager.updateTasksStats(additionalTasks, tasksPerSecond)
+
+	// Verify the tasksTotal is updated correctly
+	expectedTasksTotal += int64(additionalTasks)
+	assert.Equal(t, expectedTasksTotal, manager.tasksTotal.Load(), "Expected tasksTotal to be %d, got %d", expectedTasksTotal, manager.tasksTotal.Load())
+
+	// Verify the tasksPerSecond is updated correctly
+	expectedTasksPerSecond = float32(40) / float32(15)
+	assert.InDelta(t, expectedTasksPerSecond, manager.tasksPerSecond.Load(), 0.001, "Expected tasksPerSecond to be %f, got %f", expectedTasksPerSecond, manager.tasksPerSecond.Load())
+}

@@ -10,6 +10,8 @@ import (
 
 	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
+
+	uatomic "go.uber.org/atomic"
 )
 
 var (
@@ -32,6 +34,11 @@ var (
 type Manager struct {
 	sync.RWMutex
 
+	jobQueue       priorityQueue   // A priority queue to hold the scheduled jobs
+	tasksPerSecond uatomic.Float32 // Number of tasks executed per second
+	tasksTotal     atomic.Int64    // Total number of tasks in the queue
+	widestJob      atomic.Int32    // Widest job in the queue in terms of number of tasks
+
 	ctx      context.Context    // Context for the manager
 	cancel   context.CancelFunc // Cancel function for the manager
 	runDone  chan struct{}      // Channel to signal run has stopped
@@ -39,8 +46,6 @@ type Manager struct {
 
 	newJobChan chan bool // Channel to signal that new tasks have entered the queue
 	taskChan   chan Task // Channel to send tasks to the worker pool
-
-	jobQueue priorityQueue // A priority queue to hold the scheduled jobs
 
 	errorChan   chan error  // Channel to receive errors from the worker pool
 	externalErr atomic.Bool // Tracks ownership of error channel consumption
@@ -132,6 +137,16 @@ func (d *Manager) ScheduleJob(job Job) error {
 	default:
 		// Do nothing if the manager isn't stopped
 	}
+
+	// Record tasks stats
+	if len(job.Tasks) > int(d.widestJob.Load()) {
+		d.widestJob.Store(int32(len(job.Tasks)))
+	}
+	tasksPerSecond := calcTasksPerSecond(len(job.Tasks), job.Cadence)
+	d.updateTasksStats(len(job.Tasks), tasksPerSecond)
+
+	// Scale worker pool if needed
+	d.scaleWorkerPool()
 
 	// Push the job to the queue
 	heap.Push(&d.jobQueue, &job)
@@ -234,6 +249,16 @@ func (d *Manager) Stop() {
 	})
 }
 
+// updateTasksPerSecond updates the tasks per second metric.
+func (d *Manager) updateTasksStats(additionalTasks int, tasksPerSecond float32) {
+	// Update the tasks per second metric base on a weighted average
+	newTasksPerSecond := (tasksPerSecond*float32(additionalTasks) + d.tasksPerSecond.Load()*float32(d.tasksTotal.Load())) / float32(d.tasksTotal.Load()+int64(additionalTasks))
+
+	// Store updated values
+	d.tasksPerSecond.Store(newTasksPerSecond)
+	d.tasksTotal.Add(int64(additionalTasks))
+}
+
 // consumeErrorChan handles errors until ErrorChannel() is called.
 func (d *Manager) consumeErrorChan() {
 	for {
@@ -315,6 +340,7 @@ func (d *Manager) run() {
 
 			// Wait until the next job is due or until stopped.
 			select {
+			// TODO: also listen to newJobChan here?
 			case <-time.After(delay):
 				// Time to execute the next job
 				continue
@@ -324,6 +350,21 @@ func (d *Manager) run() {
 			}
 		}
 	}
+}
+
+// scaleWorkerPool scales the worker pool based on current job queue stats.
+func (d *Manager) scaleWorkerPool() {
+	currentWorkers := d.workerPool.runningWorkers()
+	// Calculate the number of workers needed based on the widest job
+	workersNeeded := d.widestJob.Load() * 3
+
+	// TODO: include tasks per second in the calculation
+
+	if workersNeeded > currentWorkers {
+		d.workerPool.addWorkers(int(workersNeeded - currentWorkers))
+	}
+
+	// TODO: remove workers if the need is much too overly satisfied
 }
 
 // validateJob validates a Job.
@@ -347,6 +388,14 @@ func (d *Manager) validateJob(job Job) error {
 		return ErrDuplicateJobID
 	}
 	return nil
+}
+
+// calcTasksPerSecond calculates the number of tasks executed per second.
+func calcTasksPerSecond(nTasks int, cadence time.Duration) float32 {
+	if cadence == 0 {
+		return 0
+	}
+	return float32(nTasks) / float32(cadence.Seconds())
 }
 
 // newManager creates, initializes, and starts a new Manager.
