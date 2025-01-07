@@ -5,8 +5,8 @@
 - revisist default values of `NewManager`, e.g. channel buffer sizes
   - not super important, since dynamic scaling will override these values
 - dynamic scaleup and scaledown of the number of workers
-  - add a collector to the manager to keep track of job execution times
-  - finish the `scaleWorkers` method in the manager
+  - utilize task metrics in the manager to determine if more/less workers are needed
+- clean up in-code todo:s
 
 ## TODO v0.3.0
 

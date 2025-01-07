@@ -656,3 +656,32 @@ func TestUpdateTasksStats(t *testing.T) {
 	expectedTasksPerSecond = float32(40) / float32(15)
 	assert.InDelta(t, expectedTasksPerSecond, manager.tasksPerSecond.Load(), 0.001, "Expected tasksPerSecond to be %f, got %f", expectedTasksPerSecond, manager.tasksPerSecond.Load())
 }
+
+func TestTaskExecutionMetrics(t *testing.T) {
+	manager := NewManagerCustom(2, 2)
+	defer manager.Stop()
+
+	// Schedule a job with a task that takes 20ms to execute
+	var wg sync.WaitGroup
+	wg.Add(1)
+	executionTime := 25 * time.Millisecond
+	job := Job{
+		ID:       "test-execution-task",
+		Cadence:  1 * time.Second,                       // Set a long cadence to avoid more than 1 execution
+		NextExec: time.Now().Add(25 * time.Millisecond), // TODO: Fix this hack when instant exec is implemented
+		Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+			time.Sleep(executionTime)
+			wg.Done()
+			return nil
+		}}},
+	}
+	manager.ScheduleJob(job)
+
+	// Wait for the task to execute and the metrics to be updated
+	wg.Wait()
+	time.Sleep(10 * time.Millisecond) // Allow time for metrics to be updated
+
+	// Verify the metrics
+	assert.Equal(t, int64(1), manager.metrTaskCount.Load(), "Expected 1 total task to have been counted")
+	assert.GreaterOrEqual(t, manager.metrAvgExecTime.Load(), executionTime, "Expected task execution time to be at least 10ms")
+}

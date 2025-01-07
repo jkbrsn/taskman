@@ -34,24 +34,30 @@ var (
 type Manager struct {
 	sync.RWMutex
 
+	// Queue
 	jobQueue       priorityQueue   // A priority queue to hold the scheduled jobs
 	tasksPerSecond uatomic.Float32 // Number of tasks executed per second
 	tasksTotal     atomic.Int64    // Total number of tasks in the queue
 	widestJob      atomic.Int32    // Widest job in the queue in terms of number of tasks
+	newJobChan     chan bool       // Channel to signal that new tasks have entered the queue
 
+	// Context and operations
 	ctx      context.Context    // Context for the manager
 	cancel   context.CancelFunc // Cancel function for the manager
 	runDone  chan struct{}      // Channel to signal run has stopped
 	stopOnce sync.Once          // Ensures Stop is only called once
 
-	newJobChan chan bool // Channel to signal that new tasks have entered the queue
-	taskChan   chan Task // Channel to send tasks to the worker pool
-
-	errorChan   chan error  // Channel to receive errors from the worker pool
-	externalErr atomic.Bool // Tracks ownership of error channel consumption
-
+	// Shared with worker pool
+	taskChan       chan Task   // Channel to send tasks to the worker pool
+	errorChan      chan error  // Channel to receive errors from the worker pool
+	externalErr    atomic.Bool // Tracks ownership of error channel consumption
 	workerPool     *workerPool
 	workerPoolDone chan struct{} // Channel to receive signal that the worker pool has stopped
+
+	// Metrics
+	// TODO: move to external metrics component?
+	metrAvgExecTime uatomic.Duration // Average execution time of tasks
+	metrTaskCount   atomic.Int64     // Total number of tasks executed
 }
 
 // Task is an interface for tasks that can be executed.
@@ -85,6 +91,7 @@ type Job struct {
 // transfers responsibility to consume errors to the caller, which is expected to keep doing so
 // until the Manager has completely stopped. Not consuming errors may lead to a block in the
 // worker pool.
+// TODO: redesign default channel consumption
 func (d *Manager) ErrorChannel() (<-chan error, error) {
 	if !d.externalErr.CompareAndSwap(false, true) {
 		return nil, errors.New("ErrorChannel can only be called once, returning nil")
@@ -146,6 +153,7 @@ func (d *Manager) ScheduleJob(job Job) error {
 	d.updateTasksStats(len(job.Tasks), tasksPerSecond)
 
 	// Scale worker pool if needed
+	// TODO: test behavior of this
 	d.scaleWorkerPool()
 
 	// Push the job to the queue
@@ -283,6 +291,38 @@ func (d *Manager) consumeErrorChan() {
 	}
 }
 
+// consumeMetrics consumes execution times from the worker pool, and uses the data to calculate the
+// average execution time of tasks.
+func (d *Manager) consumeMetrics() {
+	execTimeChan, err := d.workerPool.execTimeChannel()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to get exec time channel")
+		return
+	}
+
+	for {
+		select {
+		case execTime := <-execTimeChan:
+			log.Debug().Msgf("Exec time received: %v", execTime)
+			avgExecTime := d.metrAvgExecTime.Load()
+			taskCount := d.metrTaskCount.Load()
+
+			// Calculate the new average execution time
+			newAvgExecTime := (avgExecTime*time.Duration(taskCount) + execTime) / time.Duration(taskCount+1)
+
+			// Store the updated metrics
+			d.metrAvgExecTime.Store(newAvgExecTime)
+			d.metrTaskCount.Add(1)
+		case <-d.workerPoolDone:
+			// Only stop consuming once the worker pool is done, since any
+			// remaining workers will need to send exec times before closing
+			return
+		}
+
+	}
+
+}
+
 // jobsInQueue returns the length of the jobQueue slice.
 func (d *Manager) jobsInQueue() int {
 	d.Lock()
@@ -399,21 +439,35 @@ func calcTasksPerSecond(nTasks int, cadence time.Duration) float32 {
 }
 
 // newManager creates, initializes, and starts a new Manager.
-func newManager(workerPool *workerPool, taskChan chan Task, errorChan chan error, workerPoolDone chan struct{}) *Manager {
+func newManager(
+	taskChan chan Task,
+	errorChan chan error,
+	execTimeChan chan time.Duration,
+	initWorkerCount int,
+	workerPoolDone chan struct{},
+) *Manager {
 	log.Debug().Msg("Creating new manager")
 
 	// Input validation
-	if workerPool == nil {
-		panic("workerPool cannot be nil")
-	}
 	if taskChan == nil {
 		panic("taskChan cannot be nil")
 	}
 	if errorChan == nil {
 		panic("errorChan cannot be nil")
 	}
+	if execTimeChan == nil {
+		panic("execTimeChan cannot be nil")
+	}
+	if initWorkerCount <= 0 {
+		panic("initWorkerCount must be greater than 0")
+	}
+	if workerPoolDone == nil {
+		panic("workerPoolDone cannot be nil")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+
+	workerPool := newWorkerPool(initWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
 
 	d := &Manager{
 		ctx:            ctx,
@@ -432,35 +486,32 @@ func newManager(workerPool *workerPool, taskChan chan Task, errorChan chan error
 	log.Debug().Msg("Starting manager")
 	go d.run()
 	go d.consumeErrorChan()
+	go d.consumeMetrics()
 
 	return d
 }
 
 // NewManager creates, starts and returns a new Manager.
 func NewManager() *Manager {
-	var initialWorkerCount, channelBufferSize int
-	initialWorkerCount = 32
-	channelBufferSize = 256
-
-	errorChan := make(chan error, channelBufferSize)
-	execTimeChan := make(chan int64, channelBufferSize)
+	channelBufferSize := 256
 	taskChan := make(chan Task, channelBufferSize)
+	errorChan := make(chan error, channelBufferSize)
+	execTimeChan := make(chan time.Duration, channelBufferSize)
+	initWorkerCount := 32
 	workerPoolDone := make(chan struct{})
 
-	workerPool := newWorkerPool(initialWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
-	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
+	s := newManager(taskChan, errorChan, execTimeChan, initWorkerCount, workerPoolDone)
 
 	return s
 }
 
 // NewManagerCustom creates, starts and returns a new Manager using custom values for some of the
 // task manager parameters.
-func NewManagerCustom(initialWorkerCount, channelBufferSize int) *Manager {
-	errorChan := make(chan error, channelBufferSize)
-	execTimeChan := make(chan int64, channelBufferSize)
+func NewManagerCustom(initWorkerCount, channelBufferSize int) *Manager {
 	taskChan := make(chan Task, channelBufferSize)
+	errorChan := make(chan error, channelBufferSize)
+	execTimeChan := make(chan time.Duration, channelBufferSize)
 	workerPoolDone := make(chan struct{})
-	workerPool := newWorkerPool(initialWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
-	s := newManager(workerPool, taskChan, errorChan, workerPoolDone)
+	s := newManager(taskChan, errorChan, execTimeChan, initWorkerCount, workerPoolDone)
 	return s
 }

@@ -11,7 +11,7 @@ import (
 
 func getWorkerPool(nWorkers int) *workerPool {
 	errorChan := make(chan error, 1)
-	execTimeChan := make(chan int64, 1)
+	execTimeChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
 	return newWorkerPool(nWorkers, errorChan, execTimeChan, taskChan, workerPoolDone)
@@ -44,7 +44,7 @@ func TestWorkerPoolStartStop(t *testing.T) {
 
 func TestWorkerPoolTaskExecution(t *testing.T) {
 	errorChan := make(chan error, 1)
-	execTimeChan := make(chan int64, 1)
+	execTimeChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
 	pool := newWorkerPool(1, errorChan, execTimeChan, taskChan, workerPoolDone)
@@ -85,7 +85,7 @@ func TestWorkerPoolTaskExecution(t *testing.T) {
 
 func TestWorkerPoolExecutionError(t *testing.T) {
 	errorChan := make(chan error, 1)
-	execTimeChan := make(chan int64, 1)
+	execTimeChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
 	pool := newWorkerPool(1, errorChan, execTimeChan, taskChan, workerPoolDone)
@@ -124,7 +124,7 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 
 func TestWorkerPoolBusyWorkers(t *testing.T) {
 	errorChan := make(chan error, 1)
-	execTimeChan := make(chan int64, 1)
+	execTimeChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
 	pool := newWorkerPool(2, errorChan, execTimeChan, taskChan, workerPoolDone)
@@ -183,7 +183,7 @@ func TestWorkerPoolBusyWorkers(t *testing.T) {
 
 func TestStopWorker(t *testing.T) {
 	errorChan := make(chan error, 1)
-	execTimeChan := make(chan int64, 1)
+	execTimeChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
 	pool := newWorkerPool(2, errorChan, execTimeChan, taskChan, workerPoolDone)
@@ -247,7 +247,7 @@ func TestStopWorker(t *testing.T) {
 
 func TestStopWorkers(t *testing.T) {
 	errorChan := make(chan error, 1)
-	execTimeChan := make(chan int64, 1)
+	execTimeChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
 	pool := newWorkerPool(6, errorChan, execTimeChan, taskChan, workerPoolDone)
