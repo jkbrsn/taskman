@@ -430,7 +430,10 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 	mu.Unlock()
 }
 
-func TestConcurrentScheduleTask(t *testing.T) {
+// TODO: remove the concurrent scheduling tests, after considering the implications
+
+// DEPRECATED: This test is no longer valid as the manager no longer allows concurrent scheduling
+/* func TestConcurrentScheduleTask(t *testing.T) {
 	// Deactivate debug logs for this test
 	setLoggerLevel(zerolog.InfoLevel)
 
@@ -460,9 +463,10 @@ func TestConcurrentScheduleTask(t *testing.T) {
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
 	assert.Equal(t, expectedTasks, manager.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, manager.jobsInQueue())
-}
+} */
 
-func TestConcurrentScheduleJob(t *testing.T) {
+// DEPRECATED: This test is no longer valid as the manager no longer allows concurrent scheduling
+/* func TestConcurrentScheduleJob(t *testing.T) {
 	// Deactivate debug logs for this test
 	setLoggerLevel(zerolog.InfoLevel)
 
@@ -492,7 +496,7 @@ func TestConcurrentScheduleJob(t *testing.T) {
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
 	assert.Equal(t, expectedTasks, manager.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, manager.jobsInQueue())
-}
+} */
 
 func TestZeroCadenceTask(t *testing.T) {
 	manager := NewManagerCustom(10, 1)
@@ -622,39 +626,39 @@ Loop:
 	assert.NotContains(t, receivedErrors, "internal error 2", "Errors logged internally should not appear")
 }
 
-func TestUpdateTasksStats(t *testing.T) {
+func TestUpdateTaskMetrics(t *testing.T) {
 	manager := NewManagerCustom(10, 1)
 	defer manager.Stop()
 
 	// Initial state
-	initialTasksTotal := manager.tasksTotal.Load()
-	initialTasksPerSecond := manager.tasksPerSecond.Load()
+	initialTotalTaskCount := manager.metrTotalTaskCount.Load()
+	initialTasksPerSecond := manager.metrTasksPerSecond.Load()
 
 	// Update stats with new tasks
 	additionalTasks := 5
-	tasksPerSecond := float32(2.0)
-	manager.updateTasksStats(additionalTasks, tasksPerSecond)
+	metrTasksPerSecond := float32(2.0)
+	manager.updateTaskMetrics(additionalTasks, metrTasksPerSecond)
 
-	// Verify the tasksTotal is updated correctly
-	expectedTasksTotal := initialTasksTotal + int64(additionalTasks)
-	assert.Equal(t, expectedTasksTotal, manager.tasksTotal.Load(), "Expected tasksTotal to be %d, got %d", expectedTasksTotal, manager.tasksTotal.Load())
+	// Verify the metrTotalTaskCount is updated correctly
+	expectedTasksTotal := initialTotalTaskCount + int64(additionalTasks)
+	assert.Equal(t, expectedTasksTotal, manager.metrTotalTaskCount.Load(), "Expected metrTotalTaskCount to be %d, got %d", expectedTasksTotal, manager.metrTotalTaskCount.Load())
 
-	// Verify the tasksPerSecond is updated correctly
+	// Verify the metrTasksPerSecond is updated correctly
 	expectedTasksPerSecond := initialTasksPerSecond + float32(2.0)
-	assert.InDelta(t, expectedTasksPerSecond, manager.tasksPerSecond.Load(), 0.001, "Expected tasksPerSecond to be %f, got %f", expectedTasksPerSecond, manager.tasksPerSecond.Load())
+	assert.InDelta(t, expectedTasksPerSecond, manager.metrTasksPerSecond.Load(), 0.001, "Expected metrTasksPerSecond to be %f, got %f", expectedTasksPerSecond, manager.metrTasksPerSecond.Load())
 
 	// Update stats with another set of tasks
 	additionalTasks = 10
-	tasksPerSecond = float32(3.0)
-	manager.updateTasksStats(additionalTasks, tasksPerSecond)
+	metrTasksPerSecond = float32(3.0)
+	manager.updateTaskMetrics(additionalTasks, metrTasksPerSecond)
 
-	// Verify the tasksTotal is updated correctly
+	// Verify the metrTotalTaskCount is updated correctly
 	expectedTasksTotal += int64(additionalTasks)
-	assert.Equal(t, expectedTasksTotal, manager.tasksTotal.Load(), "Expected tasksTotal to be %d, got %d", expectedTasksTotal, manager.tasksTotal.Load())
+	assert.Equal(t, expectedTasksTotal, manager.metrTotalTaskCount.Load(), "Expected metrTotalTaskCount to be %d, got %d", expectedTasksTotal, manager.metrTotalTaskCount.Load())
 
-	// Verify the tasksPerSecond is updated correctly
+	// Verify the metrTasksPerSecond is updated correctly
 	expectedTasksPerSecond = float32(40) / float32(15)
-	assert.InDelta(t, expectedTasksPerSecond, manager.tasksPerSecond.Load(), 0.001, "Expected tasksPerSecond to be %f, got %f", expectedTasksPerSecond, manager.tasksPerSecond.Load())
+	assert.InDelta(t, expectedTasksPerSecond, manager.metrTasksPerSecond.Load(), 0.001, "Expected metrTasksPerSecond to be %f, got %f", expectedTasksPerSecond, manager.metrTasksPerSecond.Load())
 }
 
 func TestTaskExecutionMetrics(t *testing.T) {

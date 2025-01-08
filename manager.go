@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,11 +36,8 @@ type Manager struct {
 	sync.RWMutex
 
 	// Queue
-	jobQueue       priorityQueue   // A priority queue to hold the scheduled jobs
-	tasksPerSecond uatomic.Float32 // Number of tasks executed per second
-	tasksTotal     atomic.Int64    // Total number of tasks in the queue
-	widestJob      atomic.Int32    // Widest job in the queue in terms of number of tasks
-	newJobChan     chan bool       // Channel to signal that new tasks have entered the queue
+	jobQueue   priorityQueue // A priority queue to hold the scheduled jobs
+	newJobChan chan bool     // Channel to signal that new tasks have entered the queue
 
 	// Context and operations
 	ctx      context.Context    // Context for the manager
@@ -56,8 +54,11 @@ type Manager struct {
 
 	// Metrics
 	// TODO: move to external metrics component?
-	metrAvgExecTime uatomic.Duration // Average execution time of tasks
-	metrTaskCount   atomic.Int64     // Total number of tasks executed
+	metrAvgExecTime    uatomic.Duration // Average execution time of tasks
+	metrTaskCount      atomic.Int64     // Total number of tasks executed
+	metrTasksPerSecond uatomic.Float32  // Number of tasks executed per second
+	metrTotalTaskCount atomic.Int64     // Total number of tasks in the queue
+	metrWidestJob      atomic.Int32     // Widest job in the queue in terms of number of tasks
 }
 
 // Task is an interface for tasks that can be executed.
@@ -145,12 +146,12 @@ func (d *Manager) ScheduleJob(job Job) error {
 		// Do nothing if the manager isn't stopped
 	}
 
-	// Record tasks stats
-	if len(job.Tasks) > int(d.widestJob.Load()) {
-		d.widestJob.Store(int32(len(job.Tasks)))
+	// Update task metrics
+	if len(job.Tasks) > int(d.metrWidestJob.Load()) {
+		d.metrWidestJob.Store(int32(len(job.Tasks)))
 	}
-	tasksPerSecond := calcTasksPerSecond(len(job.Tasks), job.Cadence)
-	d.updateTasksStats(len(job.Tasks), tasksPerSecond)
+	metrTasksPerSecond := calcTasksPerSecond(len(job.Tasks), job.Cadence)
+	d.updateTaskMetrics(len(job.Tasks), metrTasksPerSecond)
 
 	// Scale worker pool if needed
 	// TODO: test behavior of this
@@ -257,14 +258,14 @@ func (d *Manager) Stop() {
 	})
 }
 
-// updateTasksPerSecond updates the tasks per second metric.
-func (d *Manager) updateTasksStats(additionalTasks int, tasksPerSecond float32) {
+// updateTaskMetrics updates the task metrics.
+func (d *Manager) updateTaskMetrics(additionalTasks int, metrTasksPerSecond float32) {
 	// Update the tasks per second metric base on a weighted average
-	newTasksPerSecond := (tasksPerSecond*float32(additionalTasks) + d.tasksPerSecond.Load()*float32(d.tasksTotal.Load())) / float32(d.tasksTotal.Load()+int64(additionalTasks))
+	newmetrTasksPerSecond := (metrTasksPerSecond*float32(additionalTasks) + d.metrTasksPerSecond.Load()*float32(d.metrTotalTaskCount.Load())) / float32(d.metrTotalTaskCount.Load()+int64(additionalTasks))
 
 	// Store updated values
-	d.tasksPerSecond.Store(newTasksPerSecond)
-	d.tasksTotal.Add(int64(additionalTasks))
+	d.metrTasksPerSecond.Store(newmetrTasksPerSecond)
+	d.metrTotalTaskCount.Add(int64(additionalTasks))
 }
 
 // consumeErrorChan handles errors until ErrorChannel() is called.
@@ -394,17 +395,45 @@ func (d *Manager) run() {
 
 // scaleWorkerPool scales the worker pool based on current job queue stats.
 func (d *Manager) scaleWorkerPool() {
-	currentWorkers := d.workerPool.runningWorkers()
+	log.Debug().Msg("Scaling worker pool")
+	currentWorkerCount := d.workerPool.runningWorkers()
+
 	// Calculate the number of workers needed based on the widest job
-	workersNeeded := d.widestJob.Load() * 3
+	workersNeededParallelTasks := d.metrWidestJob.Load()
 
-	// TODO: include tasks per second in the calculation
+	// Calculate the number of workers needed based on the average execution time and tasks per second
+	avgExecTimeSeconds := d.metrAvgExecTime.Load().Seconds()
+	tasksPerSecond := float64(d.metrTasksPerSecond.Load())
+	workersNeededConcurrently := int32(math.Ceil(avgExecTimeSeconds * tasksPerSecond))
 
-	if workersNeeded > currentWorkers {
-		d.workerPool.addWorkers(int(workersNeeded - currentWorkers))
+	// TODO: consider adding a direct check, comparing current available workers to the immediate
+	//       need based on the latest added job. This would allow for immediate scaling if needed.
+
+	// Use the higher of the two metrics
+	workersNeeded := workersNeededParallelTasks
+	if workersNeededConcurrently > workersNeeded {
+		workersNeeded = workersNeededConcurrently
 	}
 
-	// TODO: remove workers if the need is much too overly satisfied
+	// Add a buffer of extra workers on top of the calculated number
+	// TODO: evaluate size of buffer factor
+	bufferFactor := 1.5 // 50% buffer
+	workersNeeded = int32(math.Ceil(float64(workersNeeded) * bufferFactor))
+
+	// Adjust the worker pool size
+	if workersNeeded > currentWorkerCount {
+		log.Debug().Msgf("Scaling worker pool UP from %d to %d workers", currentWorkerCount, workersNeeded)
+		// Scale up
+		d.workerPool.addWorkers(int(workersNeeded - currentWorkerCount))
+	} else if workersNeeded < currentWorkerCount {
+		// Scale down cautiously
+		utilizationThreshold := 0.4 // If above 40% utilization, do not scale down
+		if d.workerPool.utilization() < utilizationThreshold {
+			log.Debug().Msgf("Scaling worker pool DOWN from %d to %d workers", currentWorkerCount, workersNeeded)
+			d.workerPool.stopWorkers(int(currentWorkerCount - workersNeeded))
+		}
+	}
+
 }
 
 // validateJob validates a Job.

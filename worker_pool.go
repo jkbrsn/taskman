@@ -220,6 +220,15 @@ func (wp *workerPool) stopWorkers(nWorkers int) {
 	}
 }
 
+// TODO: test this
+// utilization returns the utilization of the worker pool as a float between 0.0 and 1.0.
+func (wp *workerPool) utilization() float64 {
+	if wp.runningWorkers() == 0 {
+		return 0.0
+	}
+	return float64(wp.activeWorkers()) / float64(wp.runningWorkers())
+}
+
 // newWorkerPool creates and returns a new worker pool.
 func newWorkerPool(
 	initialWorkers int,

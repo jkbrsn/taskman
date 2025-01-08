@@ -4,8 +4,9 @@
 
 - revisist default values of `NewManager`, e.g. channel buffer sizes
   - not super important, since dynamic scaling will override these values
-- dynamic scaleup and scaledown of the number of workers
-  - utilize task metrics in the manager to determine if more/less workers are needed
+- consider what do to about concurrent scheduling - simply disallow, for simplicity's sake?
+  - if disallowed, add a sync.Mutex to the manager to lock scheduling operations
+  - also, add a note in the documentation about this, both in the code and in the README
 - clean up in-code todo:s
 
 ## TODO v0.3.0
