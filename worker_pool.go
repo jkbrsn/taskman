@@ -11,15 +11,17 @@ import (
 
 // workerPool manages a pool of workers that execute tasks.
 type workerPool struct {
-	workers        sync.Map     // Map worker ID (xid.ID) to worker (workerInfo)
-	workersActive  atomic.Int32 // Number of active workers
-	workersRunning atomic.Int32 // Number of running workers
+	workers           sync.Map     // Map worker ID (xid.ID) to worker (workerInfo)
+	workersActive     atomic.Int32 // Number of active workers
+	workersRunning    atomic.Int32 // Number of running workers
+	workerCountTarget atomic.Int32 // Target number of workers
 
-	errorChan      chan<- error       // Send-only channel for errors
-	execTimeChan   chan time.Duration // Channel to send execution times
-	taskChan       <-chan Task        // Receive-only channel for tasks
-	stopPoolChan   chan struct{}      // Channel to signal stopping the worker pool
-	workerPoolDone chan struct{}      // Channel to signal worker pool is done
+	errorChan       chan<- error       // Send-only channel for errors
+	execTimeChan    chan time.Duration // Channel to send execution times
+	taskChan        <-chan Task        // Receive-only channel for tasks
+	workerCountChan chan int32         // Channel to receive worker count changes
+	stopPoolChan    chan struct{}      // Channel to signal stopping the worker pool
+	workerPoolDone  chan struct{}      // Channel to signal worker pool is done
 
 	mu sync.Mutex
 	wg sync.WaitGroup
@@ -37,6 +39,16 @@ func (wp *workerPool) activeWorkers() int32 {
 	return wp.workersActive.Load()
 }
 
+// runningWorkers returns the number of running workers.
+func (wp *workerPool) runningWorkers() int32 {
+	return wp.workersRunning.Load()
+}
+
+// targetWorkerCount returns the pool's target worker count.
+func (wp *workerPool) targetWorkerCount() int32 {
+	return wp.workerCountTarget.Load()
+}
+
 // addWorkers adds to the worker pool by starting new workers.
 func (wp *workerPool) addWorkers(nWorkers int) {
 	log.Info().Msgf("Adding %d new workers to the pool", nWorkers)
@@ -45,6 +57,28 @@ func (wp *workerPool) addWorkers(nWorkers int) {
 		workerID := xid.New()
 		go wp.startWorker(workerID)
 	}
+}
+
+// adjustWorkerCount adjusts the number of workers in the pool to match the target worker count.
+func (pool *workerPool) adjustWorkerCount(newTarget int32) {
+	currentTarget := pool.targetWorkerCount()
+
+	// Add or remove workers as needed
+	if newTarget > currentTarget {
+		log.Info().Msgf("Scaling worker pool UP from %d to %d workers", currentTarget, newTarget)
+		// Scale up
+		pool.addWorkers(int(newTarget - currentTarget))
+	} else if newTarget < currentTarget {
+		// Scale down cautiously
+		utilizationThreshold := 0.3 // If above 30% utilization, do not scale down
+		if pool.utilization() < utilizationThreshold {
+			log.Info().Msgf("Scaling worker pool DOWN from %d to %d workers", currentTarget, newTarget)
+			pool.stopWorkers(int(currentTarget - newTarget))
+		}
+	}
+
+	// Update the target worker count
+	pool.workerCountTarget.Store(newTarget)
 }
 
 // execTimeChan returns a read-only channel for consuming exec times from task execution.
@@ -66,9 +100,17 @@ func (wp *workerPool) idleWorkers() []xid.ID {
 	return idleWorkers
 }
 
-// runningWorkers returns the number of running workers.
-func (wp *workerPool) runningWorkers() int32 {
-	return wp.workersRunning.Load()
+// processWorkerCountScaling listens for worker count requests and adjusts the worker count accordingly.
+func (wp *workerPool) processWorkerCountScaling() {
+	for {
+		select {
+		case <-wp.stopPoolChan:
+			log.Debug().Msg("Worker count scaling received stop signal, exiting")
+			return
+		case requestWorkerCount := <-wp.workerCountChan:
+			wp.adjustWorkerCount(requestWorkerCount)
+		}
+	}
 }
 
 // startWorker executes tasks from the task channel.
@@ -175,8 +217,13 @@ func (wp *workerPool) stopWorkers(nWorkers int) {
 	defer wp.mu.Unlock()
 
 	// Validate number of workers to remove
-	if nWorkers <= 0 || nWorkers > int(wp.runningWorkers()) {
-		log.Warn().Msg("Invalid number of workers to remove")
+	if nWorkers <= 0 {
+		log.Warn().Msg("Cannot remove zero or negative workers")
+		// TODO: return error?
+		return
+	}
+	if nWorkers > int(wp.runningWorkers()) {
+		log.Warn().Msg("Cannot remove more workers than are running")
 		// TODO: return error?
 		return
 	}
@@ -192,7 +239,7 @@ func (wp *workerPool) stopWorkers(nWorkers int) {
 		return
 	}
 
-	// Stop all idle workers if there are not enoug of them
+	// If there aren't enough idle workers, first stop all idle workers
 	for _, workerID := range idleWorkers {
 		wp.stopWorker(workerID)
 	}
@@ -229,6 +276,11 @@ func (wp *workerPool) utilization() float64 {
 	return float64(wp.activeWorkers()) / float64(wp.runningWorkers())
 }
 
+// workerCountScalingChannel returns a write-only channel for scaling the worker count.
+func (wp *workerPool) workerCountScalingChannel() chan<- int32 {
+	return wp.workerCountChan
+}
+
 // newWorkerPool creates and returns a new worker pool.
 func newWorkerPool(
 	initialWorkers int,
@@ -238,13 +290,17 @@ func newWorkerPool(
 	workerPoolDone chan struct{},
 ) *workerPool {
 	pool := &workerPool{
-		errorChan:      errorChan,
-		execTimeChan:   execTimeChan,
-		stopPoolChan:   make(chan struct{}),
-		taskChan:       taskChan,
-		workerPoolDone: workerPoolDone,
+		errorChan:       errorChan,
+		execTimeChan:    execTimeChan,
+		stopPoolChan:    make(chan struct{}),
+		taskChan:        taskChan,
+		workerCountChan: make(chan int32), // TODO: make buffered?
+		workerPoolDone:  workerPoolDone,
 	}
 	pool.addWorkers(initialWorkers)
+	pool.workerCountTarget.Store(int32(initialWorkers))
+
+	go pool.processWorkerCountScaling()
 
 	return pool
 }

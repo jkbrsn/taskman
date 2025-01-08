@@ -430,10 +430,7 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 	mu.Unlock()
 }
 
-// TODO: remove the concurrent scheduling tests, after considering the implications
-
-// DEPRECATED: This test is no longer valid as the manager no longer allows concurrent scheduling
-/* func TestConcurrentScheduleTask(t *testing.T) {
+func TestConcurrentScheduleTask(t *testing.T) {
 	// Deactivate debug logs for this test
 	setLoggerLevel(zerolog.InfoLevel)
 
@@ -463,10 +460,9 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
 	assert.Equal(t, expectedTasks, manager.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, manager.jobsInQueue())
-} */
+}
 
-// DEPRECATED: This test is no longer valid as the manager no longer allows concurrent scheduling
-/* func TestConcurrentScheduleJob(t *testing.T) {
+func TestConcurrentScheduleJob(t *testing.T) {
 	// Deactivate debug logs for this test
 	setLoggerLevel(zerolog.InfoLevel)
 
@@ -496,7 +492,7 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
 	assert.Equal(t, expectedTasks, manager.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, manager.jobsInQueue())
-} */
+}
 
 func TestZeroCadenceTask(t *testing.T) {
 	manager := NewManagerCustom(10, 1)

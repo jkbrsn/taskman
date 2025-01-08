@@ -396,7 +396,6 @@ func (d *Manager) run() {
 // scaleWorkerPool scales the worker pool based on current job queue stats.
 func (d *Manager) scaleWorkerPool() {
 	log.Debug().Msg("Scaling worker pool")
-	currentWorkerCount := d.workerPool.runningWorkers()
 
 	// Calculate the number of workers needed based on the widest job
 	workersNeededParallelTasks := d.metrWidestJob.Load()
@@ -421,19 +420,8 @@ func (d *Manager) scaleWorkerPool() {
 	workersNeeded = int32(math.Ceil(float64(workersNeeded) * bufferFactor))
 
 	// Adjust the worker pool size
-	if workersNeeded > currentWorkerCount {
-		log.Debug().Msgf("Scaling worker pool UP from %d to %d workers", currentWorkerCount, workersNeeded)
-		// Scale up
-		d.workerPool.addWorkers(int(workersNeeded - currentWorkerCount))
-	} else if workersNeeded < currentWorkerCount {
-		// Scale down cautiously
-		utilizationThreshold := 0.4 // If above 40% utilization, do not scale down
-		if d.workerPool.utilization() < utilizationThreshold {
-			log.Debug().Msgf("Scaling worker pool DOWN from %d to %d workers", currentWorkerCount, workersNeeded)
-			d.workerPool.stopWorkers(int(currentWorkerCount - workersNeeded))
-		}
-	}
-
+	scalingRequestChan := d.workerPool.workerCountScalingChannel()
+	scalingRequestChan <- workersNeeded
 }
 
 // validateJob validates a Job.
