@@ -19,7 +19,7 @@ go get github.com/jakobilobi/go-taskman
 The most basic usage is to add functions directly, with the cadence that function should recurr at. In this case, a `jobID` is returned to allow the caller to later modify or remove the job.
 
 ```go
-manager := NewManager()
+manager := New()
 defer manager.Stop()
 
 jobID, err := manager.ScheduleFunc(
@@ -46,7 +46,7 @@ func (st SomeTask) Execute() error {
 }
 
 // Utilize the implementation when adding a Job
-manager := NewManager()
+manager := New()
 defer manager.Stop()
 
 job := Job{

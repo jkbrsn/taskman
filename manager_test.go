@@ -77,8 +77,8 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestNewManagerCustom(t *testing.T) {
-	manager := NewManagerCustom(10, 1)
+func TestNewTaskManagerCustom(t *testing.T) {
+	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
 
 	// Verify jobQueue is initialized
@@ -96,8 +96,8 @@ func TestNewManagerCustom(t *testing.T) {
 }
 
 func TestManagerStop(t *testing.T) {
-	// NewManagerCustom starts the manager
-	manager := NewManagerCustom(10, 2)
+	// newTaskManagerCustom starts the task manager
+	manager := newTaskManagerCustom(10, 2)
 
 	// Immediately stop the manager
 	manager.Stop()
@@ -118,14 +118,14 @@ func TestManagerStop(t *testing.T) {
 	// Wait some time to see if the task executes
 	select {
 	case <-testChan:
-		t.Fatal("Did not expect any tasks to be executed after manager is stopped")
+		t.Fatal("Did not expect any tasks to be executed after TaskManager is stopped")
 	case <-time.After(100 * time.Millisecond):
 		// No tasks executed, as expected
 	}
 }
 
 func TestScheduleFunc(t *testing.T) {
-	manager := NewManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2)
 	defer manager.Stop()
 
 	jobID, err := manager.ScheduleFunc(
@@ -146,7 +146,7 @@ func TestScheduleFunc(t *testing.T) {
 }
 
 func TestScheduleTask(t *testing.T) {
-	manager := NewManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2)
 	defer manager.Stop()
 
 	testTask := MockTask{ID: "test-task", cadence: 100 * time.Millisecond}
@@ -164,7 +164,7 @@ func TestScheduleTask(t *testing.T) {
 }
 
 func TestScheduleTasks(t *testing.T) {
-	manager := NewManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2)
 	defer manager.Stop()
 
 	mockTasks := []MockTask{
@@ -189,7 +189,7 @@ func TestScheduleTasks(t *testing.T) {
 }
 
 func TestScheduleJob(t *testing.T) {
-	manager := NewManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2)
 	defer manager.Stop()
 
 	job := getMockedJob(2, "test-job", 100*time.Millisecond, 100*time.Millisecond)
@@ -206,7 +206,7 @@ func TestScheduleJob(t *testing.T) {
 }
 
 func TestRemoveJob(t *testing.T) {
-	manager := NewManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2)
 	defer manager.Stop()
 
 	job := getMockedJob(2, "someJob", 100*time.Millisecond, 100*time.Millisecond)
@@ -232,7 +232,7 @@ func TestRemoveJob(t *testing.T) {
 }
 
 func TestReplaceJob(t *testing.T) {
-	manager := NewManagerCustom(4, 4)
+	manager := newTaskManagerCustom(4, 4)
 	defer manager.Stop()
 
 	// Add a job
@@ -266,7 +266,7 @@ func TestReplaceJob(t *testing.T) {
 }
 
 func TestTaskExecution(t *testing.T) {
-	manager := NewManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -301,7 +301,7 @@ func TestTaskExecution(t *testing.T) {
 func TestTaskRescheduling(t *testing.T) {
 	// Make room in buffered channel for multiple errors (4), since we're not consuming them in this test
 	// and the error channel otherwise blocks the workers from executing tasks
-	manager := NewManagerCustom(10, 4)
+	manager := newTaskManagerCustom(10, 4)
 	defer manager.Stop()
 
 	var executionTimes []time.Time
@@ -343,7 +343,7 @@ func TestTaskRescheduling(t *testing.T) {
 }
 
 func TestScheduleTaskDuringExecution(t *testing.T) {
-	manager := NewManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
 
 	// Dedicated channels for task execution signals
@@ -434,7 +434,7 @@ func TestConcurrentScheduleTask(t *testing.T) {
 	// Deactivate debug logs for this test
 	setLoggerLevel(zerolog.InfoLevel)
 
-	manager := NewManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -466,7 +466,7 @@ func TestConcurrentScheduleJob(t *testing.T) {
 	// Deactivate debug logs for this test
 	setLoggerLevel(zerolog.InfoLevel)
 
-	manager := NewManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -495,7 +495,7 @@ func TestConcurrentScheduleJob(t *testing.T) {
 }
 
 func TestZeroCadenceTask(t *testing.T) {
-	manager := NewManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
 
 	testChan := make(chan bool)
@@ -517,7 +517,7 @@ func TestZeroCadenceTask(t *testing.T) {
 }
 
 func TestValidateJob(t *testing.T) {
-	manager := NewManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
 
 	// Test case: valid job
@@ -574,7 +574,7 @@ func TestValidateJob(t *testing.T) {
 }
 
 func TestErrorChannelConsumption(t *testing.T) {
-	manager := NewManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
 
 	// Simulate errors being sent to the error channel
@@ -623,7 +623,7 @@ Loop:
 }
 
 func TestUpdateTaskMetrics(t *testing.T) {
-	manager := NewManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
 
 	// Initial state
@@ -658,7 +658,7 @@ func TestUpdateTaskMetrics(t *testing.T) {
 }
 
 func TestTaskExecutionMetrics(t *testing.T) {
-	manager := NewManagerCustom(2, 2)
+	manager := newTaskManagerCustom(2, 2)
 	defer manager.Stop()
 
 	// Schedule a job with a task that takes 20ms to execute

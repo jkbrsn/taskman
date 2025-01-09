@@ -17,12 +17,12 @@ import (
 
 var (
 	// ErrManagerStopped is returned when a task is added to a stopped manager.
-	ErrManagerStopped = errors.New("manager is stopped")
-	// ErrDuplicateJobID is returned when a duplicate job ID is found.
+	ErrManagerStopped = errors.New("task manager is stopped")
+	// ErrDuplicateJobID is returned when a duplicate job ID is fountm.
 	ErrDuplicateJobID = errors.New("duplicate job ID")
 	// ErrInvalidCadence is returned when a job has an invalid cadence.
 	ErrInvalidCadence = errors.New("job cadence must be greater than 0")
-	// ErrJobNotFound is returned when a job is not found.
+	// ErrJobNotFound is returned when a job is not fountm.
 	ErrJobNotFound = errors.New("job not found")
 	// ErrNoTasks is returned when a job has no tasks.
 	ErrNoTasks = errors.New("job has no tasks")
@@ -30,9 +30,9 @@ var (
 	ErrZeroNextExec = errors.New("job NextExec time must be non-zero")
 )
 
-// Manager manages task scheduling and execution.
-// It dispatches scheduled jobs to a worker pool for execution.
-type Manager struct {
+// TaskManager manages task scheduling and execution. Tasks are scheduled within Jobs, and the
+// manager dispatches scheduled jobs to a worker pool for execution.
+type TaskManager struct {
 	sync.RWMutex
 
 	// Queue
@@ -40,8 +40,8 @@ type Manager struct {
 	newJobChan chan bool     // Channel to signal that new tasks have entered the queue
 
 	// Context and operations
-	ctx      context.Context    // Context for the manager
-	cancel   context.CancelFunc // Cancel function for the manager
+	ctx      context.Context    // Context for the task manager
+	cancel   context.CancelFunc // Cancel function for the task manager
 	runDone  chan struct{}      // Channel to signal run has stopped
 	stopOnce sync.Once          // Ensures Stop is only called once
 
@@ -61,7 +61,7 @@ type Manager struct {
 	metrWidestJob      atomic.Int32     // Widest job in the queue in terms of number of tasks
 }
 
-// Task is an interface for tasks that can be executed.
+// Task is an interface for tasks that can be executetm.
 type Task interface {
 	Execute() error
 }
@@ -90,21 +90,21 @@ type Job struct {
 
 // ErrorChannel returns a read-only channel for consuming errors from task execution. Calling this
 // transfers responsibility to consume errors to the caller, which is expected to keep doing so
-// until the Manager has completely stopped. Not consuming errors may lead to a block in the
+// until the Manager has completely stoppetm. Not consuming errors may lead to a block in the
 // worker pool.
 // TODO: redesign default channel consumption
-func (d *Manager) ErrorChannel() (<-chan error, error) {
-	if !d.externalErr.CompareAndSwap(false, true) {
+func (tm *TaskManager) ErrorChannel() (<-chan error, error) {
+	if !tm.externalErr.CompareAndSwap(false, true) {
 		return nil, errors.New("ErrorChannel can only be called once, returning nil")
 
 	}
-	return d.errorChan, nil
+	return tm.errorChan, nil
 }
 
 // ScheduleFunc takes a function and adds it to the Manager in a Job. Creates and returns a
-// randomized ID, used to identify the Job within the manager.
+// randomized ID, used to identify the Job within the task manager.
 // Note: wraps the function in a BasicTask.
-func (d *Manager) ScheduleFunc(function func() error, cadence time.Duration) (string, error) {
+func (tm *TaskManager) ScheduleFunc(function func() error, cadence time.Duration) (string, error) {
 	task := BasicTask{function}
 	jobID := xid.New().String()
 
@@ -115,7 +115,7 @@ func (d *Manager) ScheduleFunc(function func() error, cadence time.Duration) (st
 		NextExec: time.Now().Add(cadence),
 	}
 
-	return jobID, d.ScheduleJob(job)
+	return jobID, tm.ScheduleJob(job)
 }
 
 // ScheduleJob adds a job to the Manager. A job is a group of tasks that are scheduled to execute
@@ -125,49 +125,49 @@ func (d *Manager) ScheduleFunc(function func() error, cadence time.Duration) (st
 // - Job must have at least one task
 // - NextExec must be non-zero and positive
 // - Job must have an ID, unique within the Manager
-func (d *Manager) ScheduleJob(job Job) error {
-	d.Lock()
-	defer d.Unlock()
+func (tm *TaskManager) ScheduleJob(job Job) error {
+	tm.Lock()
+	defer tm.Unlock()
 
 	// Validate the job
-	err := d.validateJob(job)
+	err := tm.validateJob(job)
 	if err != nil {
 		return err
 	}
 	log.Debug().Msgf("Adding job with %d tasks with ID '%s' and cadence %v", len(job.Tasks), job.ID, job.Cadence)
 
-	// Check if the manager is stopped
+	// Check if the task manager is stopped
 	select {
-	case <-d.ctx.Done():
+	case <-tm.ctx.Done():
 		// If the manager is stopped, do not continue adding the job
-		log.Debug().Msg("Manager is stopped, not adding job")
+		log.Debug().Msg("TaskManager is stopped, not adding job")
 		return ErrManagerStopped
 	default:
 		// Do nothing if the manager isn't stopped
 	}
 
 	// Update task metrics
-	if len(job.Tasks) > int(d.metrWidestJob.Load()) {
-		d.metrWidestJob.Store(int32(len(job.Tasks)))
+	if len(job.Tasks) > int(tm.metrWidestJob.Load()) {
+		tm.metrWidestJob.Store(int32(len(job.Tasks)))
 	}
 	metrTasksPerSecond := calcTasksPerSecond(len(job.Tasks), job.Cadence)
-	d.updateTaskMetrics(len(job.Tasks), metrTasksPerSecond)
+	tm.updateTaskMetrics(len(job.Tasks), metrTasksPerSecond)
 
 	// Scale worker pool if needed
 	// TODO: test behavior of this
-	d.scaleWorkerPool()
+	tm.scaleWorkerPool()
 
 	// Push the job to the queue
-	heap.Push(&d.jobQueue, &job)
+	heap.Push(&tm.jobQueue, &job)
 
-	// Signal the manager to check for new tasks
+	// Signal the task manager to check for new tasks
 	select {
-	case <-d.ctx.Done():
+	case <-tm.ctx.Done():
 		// Do nothing if the manager is stopped
-		log.Debug().Msg("Manager is stopped, not signaling new task")
+		log.Debug().Msg("TaskManager is stopped, not signaling new task")
 	default:
 		select {
-		case d.newJobChan <- true:
+		case tm.newJobChan <- true:
 			log.Trace().Msg("Signaled new job added")
 		default:
 			// Do nothing if no one is listening
@@ -178,8 +178,8 @@ func (d *Manager) ScheduleJob(job Job) error {
 }
 
 // ScheduleTask takes a Task and adds it to the Manager in a Job. Creates and returns a randomized
-// ID, used to identify the Job within the manager.
-func (d *Manager) ScheduleTask(task Task, cadence time.Duration) (string, error) {
+// ID, used to identify the Job within the task manager.
+func (tm *TaskManager) ScheduleTask(task Task, cadence time.Duration) (string, error) {
 	jobID := xid.New().String()
 
 	job := Job{
@@ -189,12 +189,12 @@ func (d *Manager) ScheduleTask(task Task, cadence time.Duration) (string, error)
 		NextExec: time.Now().Add(cadence),
 	}
 
-	return jobID, d.ScheduleJob(job)
+	return jobID, tm.ScheduleJob(job)
 }
 
 // ScheduleTasks takes a slice of Task and adds them to the Manager in a Job. Creates and returns a
-// randomized ID, used to identify the Job within the manager.
-func (d *Manager) ScheduleTasks(tasks []Task, cadence time.Duration) (string, error) {
+// randomized ID, used to identify the Job within the task manager.
+func (tm *TaskManager) ScheduleTasks(tasks []Task, cadence time.Duration) (string, error) {
 	jobID := xid.New().String()
 
 	// Takes a copy of the tasks, avoiding unintended consequences if the slice is modified
@@ -205,86 +205,86 @@ func (d *Manager) ScheduleTasks(tasks []Task, cadence time.Duration) (string, er
 		NextExec: time.Now().Add(cadence),
 	}
 
-	return jobID, d.ScheduleJob(job)
+	return jobID, tm.ScheduleJob(job)
 }
 
 // RemoveJob removes a job from the Manager.
-func (d *Manager) RemoveJob(jobID string) error {
-	d.Lock()
-	defer d.Unlock()
+func (tm *TaskManager) RemoveJob(jobID string) error {
+	tm.Lock()
+	defer tm.Unlock()
 
-	return d.jobQueue.RemoveByID(jobID)
+	return tm.jobQueue.RemoveByID(jobID)
 }
 
 // ReplaceJob replaces a job in the Manager's queue with a new job, based on their ID:s matching.
 // The new job's NextExec will be overwritten by the old job's, to preserve the Manager's schedule.
-func (d *Manager) ReplaceJob(newJob Job) error {
-	d.Lock()
-	defer d.Unlock()
+func (tm *TaskManager) ReplaceJob(newJob Job) error {
+	tm.Lock()
+	defer tm.Unlock()
 
-	jobIndex, err := d.jobQueue.JobInQueue(newJob.ID)
+	jobIndex, err := tm.jobQueue.JobInQueue(newJob.ID)
 	if err != nil {
 		return ErrJobNotFound
 	}
 	log.Debug().Msgf("Replacing job with ID: %s", newJob.ID)
-	oldJob := d.jobQueue[jobIndex]
+	oldJob := tm.jobQueue[jobIndex]
 	newJob.NextExec = oldJob.NextExec
 	newJob.index = oldJob.index
-	d.jobQueue[jobIndex] = &newJob
+	tm.jobQueue[jobIndex] = &newJob
 	return nil
 }
 
 // Stop signals the Manager to stop processing tasks and exit.
-// Note: blocks until the Manager, including all workers, has completely stopped.
-func (d *Manager) Stop() {
-	log.Debug().Msg("Attempting manager stop")
-	d.stopOnce.Do(func() {
+// Note: blocks until the Manager, including all workers, has completely stoppetm.
+func (tm *TaskManager) Stop() {
+	log.Debug().Msg("Attempting TaskManager stop")
+	tm.stopOnce.Do(func() {
 		// Signal the manager to stop
-		d.cancel()
+		tm.cancel()
 
 		// Stop the worker pool
-		d.workerPool.stop()
+		tm.workerPool.stop()
 
 		// Wait for the run loop to exit, and the worker pool to stop
-		<-d.runDone
-		<-d.workerPoolDone
+		<-tm.runDone
+		<-tm.workerPoolDone
 
 		// Close the remaining channels
-		close(d.newJobChan)
-		close(d.errorChan)
-		close(d.taskChan)
+		close(tm.newJobChan)
+		close(tm.errorChan)
+		close(tm.taskChan)
 
-		log.Debug().Msg("Manager stopped")
+		log.Debug().Msg("TaskManager stopped")
 	})
 }
 
 // updateTaskMetrics updates the task metrics.
-func (d *Manager) updateTaskMetrics(additionalTasks int, metrTasksPerSecond float32) {
+func (tm *TaskManager) updateTaskMetrics(additionalTasks int, metrTasksPerSecond float32) {
 	// Update the tasks per second metric base on a weighted average
-	newmetrTasksPerSecond := (metrTasksPerSecond*float32(additionalTasks) + d.metrTasksPerSecond.Load()*float32(d.metrTotalTaskCount.Load())) / float32(d.metrTotalTaskCount.Load()+int64(additionalTasks))
+	newmetrTasksPerSecond := (metrTasksPerSecond*float32(additionalTasks) + tm.metrTasksPerSecond.Load()*float32(tm.metrTotalTaskCount.Load())) / float32(tm.metrTotalTaskCount.Load()+int64(additionalTasks))
 
 	// Store updated values
-	d.metrTasksPerSecond.Store(newmetrTasksPerSecond)
-	d.metrTotalTaskCount.Add(int64(additionalTasks))
+	tm.metrTasksPerSecond.Store(newmetrTasksPerSecond)
+	tm.metrTotalTaskCount.Add(int64(additionalTasks))
 }
 
-// consumeErrorChan handles errors until ErrorChannel() is called.
-func (d *Manager) consumeErrorChan() {
+// consumeErrorChan handles errors until ErrorChannel() is calletm.
+func (tm *TaskManager) consumeErrorChan() {
 	for {
 		select {
-		case err := <-d.errorChan:
-			if d.externalErr.Load() {
+		case err := <-tm.errorChan:
+			if tm.externalErr.Load() {
 				log.Debug().Err(err).Msg("External caller taking control of error consumption")
 				// Resend the error to the external listener
 				go func(e error) {
-					d.errorChan <- e
+					tm.errorChan <- e
 				}(err)
 				// Close the internal consumer
 				return
 			}
 			// Handle error internally (e.g., log it)
 			log.Debug().Err(err).Msg("Unhandled error")
-		case <-d.workerPoolDone:
+		case <-tm.workerPoolDone:
 			// Only stop consuming once the worker pool is done, since any
 			// remaining workers will need to send errors on errorChan
 			return
@@ -294,8 +294,8 @@ func (d *Manager) consumeErrorChan() {
 
 // consumeMetrics consumes execution times from the worker pool, and uses the data to calculate the
 // average execution time of tasks.
-func (d *Manager) consumeMetrics() {
-	execTimeChan, err := d.workerPool.execTimeChannel()
+func (tm *TaskManager) consumeMetrics() {
+	execTimeChan, err := tm.workerPool.execTimeChannel()
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to get exec time channel")
 		return
@@ -305,16 +305,16 @@ func (d *Manager) consumeMetrics() {
 		select {
 		case execTime := <-execTimeChan:
 			log.Debug().Msgf("Exec time received: %v", execTime)
-			avgExecTime := d.metrAvgExecTime.Load()
-			taskCount := d.metrTaskCount.Load()
+			avgExecTime := tm.metrAvgExecTime.Load()
+			taskCount := tm.metrTaskCount.Load()
 
 			// Calculate the new average execution time
 			newAvgExecTime := (avgExecTime*time.Duration(taskCount) + execTime) / time.Duration(taskCount+1)
 
 			// Store the updated metrics
-			d.metrAvgExecTime.Store(newAvgExecTime)
-			d.metrTaskCount.Add(1)
-		case <-d.workerPoolDone:
+			tm.metrAvgExecTime.Store(newAvgExecTime)
+			tm.metrTaskCount.Add(1)
+		case <-tm.workerPoolDone:
 			// Only stop consuming once the worker pool is done, since any
 			// remaining workers will need to send exec times before closing
 			return
@@ -325,68 +325,68 @@ func (d *Manager) consumeMetrics() {
 }
 
 // jobsInQueue returns the length of the jobQueue slice.
-func (d *Manager) jobsInQueue() int {
-	d.Lock()
-	defer d.Unlock()
+func (tm *TaskManager) jobsInQueue() int {
+	tm.Lock()
+	defer tm.Unlock()
 
-	return d.jobQueue.Len()
+	return tm.jobQueue.Len()
 }
 
 // run runs the Manager.
-func (d *Manager) run() {
+func (tm *TaskManager) run() {
 	defer func() {
-		log.Debug().Msg("Manager run loop exiting")
-		close(d.runDone)
+		log.Debug().Msg("TaskManager run loop exiting")
+		close(tm.runDone)
 	}()
 	for {
-		d.Lock()
-		if d.jobQueue.Len() == 0 {
-			d.Unlock()
+		tm.Lock()
+		if tm.jobQueue.Len() == 0 {
+			tm.Unlock()
 			select {
-			case <-d.newJobChan:
+			case <-tm.newJobChan:
 				log.Trace().Msg("New job added, checking for next job")
 				continue
-			case <-d.ctx.Done():
-				log.Info().Msg("Manager received stop signal, exiting run loop")
+			case <-tm.ctx.Done():
+				log.Info().Msg("TaskManager received stop signal, exiting run loop")
 				return
 			}
 		} else {
-			nextJob := d.jobQueue[0]
+			nextJob := tm.jobQueue[0]
 			now := time.Now()
 			delay := nextJob.NextExec.Sub(now)
 			if delay <= 0 {
 				log.Debug().Msgf("Dispatching job %s", nextJob.ID)
-				heap.Pop(&d.jobQueue)
-				d.Unlock()
+				heap.Pop(&tm.jobQueue)
+				tm.Unlock()
 
 				// Dispatch all tasks in the job to the worker pool for execution
 				for _, task := range nextJob.Tasks {
 					select {
-					case <-d.ctx.Done():
-						log.Info().Msg("Manager received stop signal during task dispatch, exiting run loop")
+					case <-tm.ctx.Done():
+						log.Info().Msg("TaskManager received stop signal during task dispatch, exiting run loop")
 						return
-					case d.taskChan <- task:
+					case tm.taskChan <- task:
 						// Successfully sent the task
 					}
 				}
 
 				// Reschedule the job
 				nextJob.NextExec = nextJob.NextExec.Add(nextJob.Cadence)
-				d.Lock()
-				heap.Push(&d.jobQueue, nextJob)
-				d.Unlock()
+				tm.Lock()
+				heap.Push(&tm.jobQueue, nextJob)
+				tm.Unlock()
 				continue
 			}
-			d.Unlock()
+			tm.Unlock()
 
-			// Wait until the next job is due or until stopped.
+			// Wait until the next job is due or until stoppetm.
 			select {
 			// TODO: also listen to newJobChan here?
 			case <-time.After(delay):
 				// Time to execute the next job
 				continue
-			case <-d.ctx.Done():
-				log.Info().Msg("Manager received stop signal during wait, exiting run loop")
+			case <-tm.ctx.Done():
+				log.Info().Msg("TaskManager received stop signal during wait, exiting run loop")
 				return
 			}
 		}
@@ -394,19 +394,19 @@ func (d *Manager) run() {
 }
 
 // scaleWorkerPool scales the worker pool based on current job queue stats.
-func (d *Manager) scaleWorkerPool() {
+func (tm *TaskManager) scaleWorkerPool() {
 	log.Debug().Msg("Scaling worker pool")
 
 	// Calculate the number of workers needed based on the widest job
-	workersNeededParallelTasks := d.metrWidestJob.Load()
+	workersNeededParallelTasks := tm.metrWidestJob.Load()
 
 	// Calculate the number of workers needed based on the average execution time and tasks per second
-	avgExecTimeSeconds := d.metrAvgExecTime.Load().Seconds()
-	tasksPerSecond := float64(d.metrTasksPerSecond.Load())
+	avgExecTimeSeconds := tm.metrAvgExecTime.Load().Seconds()
+	tasksPerSecond := float64(tm.metrTasksPerSecond.Load())
 	workersNeededConcurrently := int32(math.Ceil(avgExecTimeSeconds * tasksPerSecond))
 
 	// TODO: consider adding a direct check, comparing current available workers to the immediate
-	//       need based on the latest added job. This would allow for immediate scaling if needed.
+	//       need based on the latest added job. This would allow for immediate scaling if needetm.
 
 	// Use the higher of the two metrics
 	workersNeeded := workersNeededParallelTasks
@@ -420,13 +420,13 @@ func (d *Manager) scaleWorkerPool() {
 	workersNeeded = int32(math.Ceil(float64(workersNeeded) * bufferFactor))
 
 	// Adjust the worker pool size
-	scalingRequestChan := d.workerPool.workerCountScalingChannel()
+	scalingRequestChan := tm.workerPool.workerCountScalingChannel()
 	scalingRequestChan <- workersNeeded
 }
 
 // validateJob validates a Job.
 // Note: does not acquire a mutex lock for accessing the jobQueue, that is up to the caller.
-func (d *Manager) validateJob(job Job) error {
+func (tm *TaskManager) validateJob(job Job) error {
 	// Jobs with cadence <= 0 are invalid, as such jobs would execute immediately and continuously
 	// and risk overwhelming the worker pool.
 	if job.Cadence <= 0 {
@@ -440,14 +440,14 @@ func (d *Manager) validateJob(job Job) error {
 	if job.NextExec.IsZero() {
 		return ErrZeroNextExec
 	}
-	// Job ID:s are unique, so duplicates are not allowed to be added.
-	if _, ok := d.jobQueue.JobInQueue(job.ID); ok == nil {
+	// Job ID:s are unique, so duplicates are not allowed to be addetm.
+	if _, ok := tm.jobQueue.JobInQueue(job.ID); ok == nil {
 		return ErrDuplicateJobID
 	}
 	return nil
 }
 
-// calcTasksPerSecond calculates the number of tasks executed per second.
+// calcTasksPerSecond calculates the number of tasks executed per secontm.
 func calcTasksPerSecond(nTasks int, cadence time.Duration) float32 {
 	if cadence == 0 {
 		return 0
@@ -455,14 +455,14 @@ func calcTasksPerSecond(nTasks int, cadence time.Duration) float32 {
 	return float32(nTasks) / float32(cadence.Seconds())
 }
 
-// newManager creates, initializes, and starts a new Manager.
-func newManager(
+// newTaskManager creates, initializes, and starts a new TaskManager.
+func newTaskManager(
 	taskChan chan Task,
 	errorChan chan error,
 	execTimeChan chan time.Duration,
 	initWorkerCount int,
 	workerPoolDone chan struct{},
-) *Manager {
+) *TaskManager {
 	log.Debug().Msg("Creating new manager")
 
 	// Input validation
@@ -486,7 +486,7 @@ func newManager(
 
 	workerPool := newWorkerPool(initWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
 
-	d := &Manager{
+	tm := &TaskManager{
 		ctx:            ctx,
 		cancel:         cancel,
 		jobQueue:       make(priorityQueue, 0),
@@ -498,37 +498,37 @@ func newManager(
 		workerPoolDone: workerPoolDone,
 	}
 
-	heap.Init(&d.jobQueue)
+	heap.Init(&tm.jobQueue)
 
-	log.Debug().Msg("Starting manager")
-	go d.run()
-	go d.consumeErrorChan()
-	go d.consumeMetrics()
+	log.Debug().Msg("Starting TaskManager")
+	go tm.run()
+	go tm.consumeErrorChan()
+	go tm.consumeMetrics()
 
-	return d
+	return tm
 }
 
-// NewManager creates, starts and returns a new Manager.
-func NewManager() *Manager {
+// New creates, starts and returns a new TaskManager.
+func New() *TaskManager {
 	channelBufferSize := 256
 	taskChan := make(chan Task, channelBufferSize)
 	errorChan := make(chan error, channelBufferSize)
 	execTimeChan := make(chan time.Duration, channelBufferSize)
-	initWorkerCount := 32
+	initialWorkerCount := 4
 	workerPoolDone := make(chan struct{})
 
-	s := newManager(taskChan, errorChan, execTimeChan, initWorkerCount, workerPoolDone)
+	tm := newTaskManager(taskChan, errorChan, execTimeChan, initialWorkerCount, workerPoolDone)
 
-	return s
+	return tm
 }
 
-// NewManagerCustom creates, starts and returns a new Manager using custom values for some of the
-// task manager parameters.
-func NewManagerCustom(initWorkerCount, channelBufferSize int) *Manager {
+// newTaskManagerCustom creates, starts and returns a new Manager using custom values for some of
+// the task manager parameters.
+func newTaskManagerCustom(initWorkerCount, channelBufferSize int) *TaskManager {
 	taskChan := make(chan Task, channelBufferSize)
 	errorChan := make(chan error, channelBufferSize)
 	execTimeChan := make(chan time.Duration, channelBufferSize)
 	workerPoolDone := make(chan struct{})
-	s := newManager(taskChan, errorChan, execTimeChan, initWorkerCount, workerPoolDone)
-	return s
+	tm := newTaskManager(taskChan, errorChan, execTimeChan, initWorkerCount, workerPoolDone)
+	return tm
 }
