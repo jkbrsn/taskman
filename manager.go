@@ -61,7 +61,7 @@ type TaskManager struct {
 	metrWidestJob      atomic.Int32     // Widest job in the queue in terms of number of tasks
 }
 
-// Task is an interface for tasks that can be executetm.
+// Task is an interface for tasks that can be executed.
 type Task interface {
 	Execute() error
 }
@@ -90,7 +90,7 @@ type Job struct {
 
 // ErrorChannel returns a read-only channel for consuming errors from task execution. Calling this
 // transfers responsibility to consume errors to the caller, which is expected to keep doing so
-// until the Manager has completely stoppetm. Not consuming errors may lead to a block in the
+// until the TaskManager has completely stopped. Not consuming errors may lead to a block in the
 // worker pool.
 // TODO: redesign default channel consumption
 func (tm *TaskManager) ErrorChannel() (<-chan error, error) {
@@ -101,7 +101,7 @@ func (tm *TaskManager) ErrorChannel() (<-chan error, error) {
 	return tm.errorChan, nil
 }
 
-// ScheduleFunc takes a function and adds it to the Manager in a Job. Creates and returns a
+// ScheduleFunc takes a function and adds it to the TaskManager in a Job. Creates and returns a
 // randomized ID, used to identify the Job within the task manager.
 // Note: wraps the function in a BasicTask.
 func (tm *TaskManager) ScheduleFunc(function func() error, cadence time.Duration) (string, error) {
@@ -118,13 +118,13 @@ func (tm *TaskManager) ScheduleFunc(function func() error, cadence time.Duration
 	return jobID, tm.ScheduleJob(job)
 }
 
-// ScheduleJob adds a job to the Manager. A job is a group of tasks that are scheduled to execute
-// together. The function returns a job ID that can be used to identify the job within the Manager.
+// ScheduleJob adds a job to the TaskManager. A job is a group of tasks that are scheduled to execute
+// together. The function returns a job ID that can be used to identify the job within the TaskManager.
 // Job requirements:
 // - Cadence must be greater than 0
 // - Job must have at least one task
 // - NextExec must be non-zero and positive
-// - Job must have an ID, unique within the Manager
+// - Job must have an ID, unique within the TaskManager
 func (tm *TaskManager) ScheduleJob(job Job) error {
 	tm.Lock()
 	defer tm.Unlock()
@@ -147,15 +147,15 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 	}
 
 	// Update task metrics
-	if len(job.Tasks) > int(tm.metrWidestJob.Load()) {
-		tm.metrWidestJob.Store(int32(len(job.Tasks)))
+	taskCount := len(job.Tasks)
+	if taskCount > int(tm.metrWidestJob.Load()) {
+		tm.metrWidestJob.Store(int32(taskCount))
 	}
-	metrTasksPerSecond := calcTasksPerSecond(len(job.Tasks), job.Cadence)
-	tm.updateTaskMetrics(len(job.Tasks), metrTasksPerSecond)
+	metrTasksPerSecond := calcTasksPerSecond(taskCount, job.Cadence)
+	tm.updateTaskMetrics(taskCount, metrTasksPerSecond)
 
 	// Scale worker pool if needed
-	// TODO: test behavior of this
-	tm.scaleWorkerPool()
+	tm.scaleWorkerPool(taskCount)
 
 	// Push the job to the queue
 	heap.Push(&tm.jobQueue, &job)
@@ -177,8 +177,8 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 	return nil
 }
 
-// ScheduleTask takes a Task and adds it to the Manager in a Job. Creates and returns a randomized
-// ID, used to identify the Job within the task manager.
+// ScheduleTask takes a Task and adds it to the TaskManager in a Job. Creates and returns a
+// randomized ID, used to identify the Job within the task manager.
 func (tm *TaskManager) ScheduleTask(task Task, cadence time.Duration) (string, error) {
 	jobID := xid.New().String()
 
@@ -192,7 +192,7 @@ func (tm *TaskManager) ScheduleTask(task Task, cadence time.Duration) (string, e
 	return jobID, tm.ScheduleJob(job)
 }
 
-// ScheduleTasks takes a slice of Task and adds them to the Manager in a Job. Creates and returns a
+// ScheduleTasks takes a slice of Task and adds them to the TaskManager in a Job. Creates and returns a
 // randomized ID, used to identify the Job within the task manager.
 func (tm *TaskManager) ScheduleTasks(tasks []Task, cadence time.Duration) (string, error) {
 	jobID := xid.New().String()
@@ -208,7 +208,7 @@ func (tm *TaskManager) ScheduleTasks(tasks []Task, cadence time.Duration) (strin
 	return jobID, tm.ScheduleJob(job)
 }
 
-// RemoveJob removes a job from the Manager.
+// RemoveJob removes a job from the TaskManager.
 func (tm *TaskManager) RemoveJob(jobID string) error {
 	tm.Lock()
 	defer tm.Unlock()
@@ -216,8 +216,8 @@ func (tm *TaskManager) RemoveJob(jobID string) error {
 	return tm.jobQueue.RemoveByID(jobID)
 }
 
-// ReplaceJob replaces a job in the Manager's queue with a new job, based on their ID:s matching.
-// The new job's NextExec will be overwritten by the old job's, to preserve the Manager's schedule.
+// ReplaceJob replaces a job in the TaskManager's queue with a new job, based on their ID:s matching.
+// The new job's NextExec will be overwritten by the old job's, to preserve the TaskManager's schedule.
 func (tm *TaskManager) ReplaceJob(newJob Job) error {
 	tm.Lock()
 	defer tm.Unlock()
@@ -234,8 +234,8 @@ func (tm *TaskManager) ReplaceJob(newJob Job) error {
 	return nil
 }
 
-// Stop signals the Manager to stop processing tasks and exit.
-// Note: blocks until the Manager, including all workers, has completely stoppetm.
+// Stop signals the TaskManager to stop processing tasks and exit.
+// Note: blocks until the TaskManager, including all workers, has completely stopped.
 func (tm *TaskManager) Stop() {
 	log.Debug().Msg("Attempting TaskManager stop")
 	tm.stopOnce.Do(func() {
@@ -268,7 +268,7 @@ func (tm *TaskManager) updateTaskMetrics(additionalTasks int, metrTasksPerSecond
 	tm.metrTotalTaskCount.Add(int64(additionalTasks))
 }
 
-// consumeErrorChan handles errors until ErrorChannel() is calletm.
+// consumeErrorChan handles errors until ErrorChannel() is called.
 func (tm *TaskManager) consumeErrorChan() {
 	for {
 		select {
@@ -295,6 +295,7 @@ func (tm *TaskManager) consumeErrorChan() {
 // consumeMetrics consumes execution times from the worker pool, and uses the data to calculate the
 // average execution time of tasks.
 func (tm *TaskManager) consumeMetrics() {
+	log.Debug().Msg("Started consuming metrics")
 	execTimeChan, err := tm.workerPool.execTimeChannel()
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to get exec time channel")
@@ -332,7 +333,7 @@ func (tm *TaskManager) jobsInQueue() int {
 	return tm.jobQueue.Len()
 }
 
-// run runs the Manager.
+// run runs the TaskManager.
 func (tm *TaskManager) run() {
 	defer func() {
 		log.Debug().Msg("TaskManager run loop exiting")
@@ -379,11 +380,13 @@ func (tm *TaskManager) run() {
 			}
 			tm.Unlock()
 
-			// Wait until the next job is due or until stoppetm.
+			// Wait until the next job is due or until stopped.
 			select {
-			// TODO: also listen to newJobChan here?
 			case <-time.After(delay):
 				// Time to execute the next job
+				continue
+			case <-tm.newJobChan:
+				// A new job was added, check for the next job
 				continue
 			case <-tm.ctx.Done():
 				log.Info().Msg("TaskManager received stop signal during wait, exiting run loop")
@@ -393,35 +396,56 @@ func (tm *TaskManager) run() {
 	}
 }
 
-// scaleWorkerPool scales the worker pool based on current job queue stats.
-func (tm *TaskManager) scaleWorkerPool() {
+// scaleWorkerPool scales the worker pool based on the current job queue.
+// The worker pool is scaled based on the highest of three metrics:
+// - The widest job in the queue in terms of number of tasks
+// - The average execution time and concurrency of tasks
+// - The number of tasks in the latest job related to available workers at the moment
+func (tm *TaskManager) scaleWorkerPool(tasksInLatestJob int) {
 	log.Debug().Msg("Scaling worker pool")
+	bufferFactor50 := 1.5
+	bufferFactor100 := 2.0
 
 	// Calculate the number of workers needed based on the widest job
 	workersNeededParallelTasks := tm.metrWidestJob.Load()
+	// Apply 100% buffer for parallel tasks, as this is a low predictability metric
+	workersNeededParallelTasks = int32(math.Ceil(float64(workersNeededParallelTasks) * bufferFactor100))
+	log.Debug().Msgf("Job width worker need: %d", workersNeededParallelTasks)
 
-	// Calculate the number of workers needed based on the average execution time and tasks per second
+	// Calculate the number of workers needed based on the average execution time and tasks/s
 	avgExecTimeSeconds := tm.metrAvgExecTime.Load().Seconds()
 	tasksPerSecond := float64(tm.metrTasksPerSecond.Load())
+	log.Debug().Msgf("Avg exec time: %v, tasks/s: %f", avgExecTimeSeconds, tasksPerSecond)
 	workersNeededConcurrently := int32(math.Ceil(avgExecTimeSeconds * tasksPerSecond))
+	// Apply 50% buffer for concurrent tasks, as this is a more predictable metric
+	workersNeededConcurrently = int32(math.Ceil(float64(workersNeededConcurrently) * bufferFactor50))
+	log.Debug().Msgf("Concurrent worker need: %d", workersNeededConcurrently)
 
-	// TODO: consider adding a direct check, comparing current available workers to the immediate
-	//       need based on the latest added job. This would allow for immediate scaling if needetm.
+	// Calculate the number of workers needed based on the number of tasks in the latest job
+	var workersNeededImmediately int32
+	if tm.workerPool.availableWorkers() < int32(tasksInLatestJob) {
+		log.Debug().Msgf("Available/running workers: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
+		log.Debug().Msgf("Tasks in latest job: %d", tasksInLatestJob)
+		// If there are not enough workers to handle the latest job, scale up immediately
+		extraWorkersNeeded := int32(tasksInLatestJob) - tm.workerPool.availableWorkers()
+		// Apply 50% buffer for immediate tasks, as this is a more predictable metric
+		workersNeededImmediately = int32(math.Ceil(float64(tm.workerPool.runningWorkers()+extraWorkersNeeded) * bufferFactor50))
+	}
+	log.Debug().Msgf("Immediate worker need: %d", workersNeededImmediately)
 
-	// Use the higher of the two metrics
+	// Use the highest of the three metrics
 	workersNeeded := workersNeededParallelTasks
 	if workersNeededConcurrently > workersNeeded {
 		workersNeeded = workersNeededConcurrently
 	}
-
-	// Add a buffer of extra workers on top of the calculated number
-	// TODO: evaluate size of buffer factor
-	bufferFactor := 1.5 // 50% buffer
-	workersNeeded = int32(math.Ceil(float64(workersNeeded) * bufferFactor))
+	if workersNeededImmediately > workersNeeded {
+		workersNeeded = workersNeededImmediately
+	}
 
 	// Adjust the worker pool size
 	scalingRequestChan := tm.workerPool.workerCountScalingChannel()
 	scalingRequestChan <- workersNeeded
+	log.Debug().Msgf("Worker pool scaling request sent: %d", workersNeeded)
 }
 
 // validateJob validates a Job.
@@ -440,7 +464,7 @@ func (tm *TaskManager) validateJob(job Job) error {
 	if job.NextExec.IsZero() {
 		return ErrZeroNextExec
 	}
-	// Job ID:s are unique, so duplicates are not allowed to be addetm.
+	// Job ID:s are unique, so duplicates are invalid.
 	if _, ok := tm.jobQueue.JobInQueue(job.ID); ok == nil {
 		return ErrDuplicateJobID
 	}
@@ -522,7 +546,7 @@ func New() *TaskManager {
 	return tm
 }
 
-// newTaskManagerCustom creates, starts and returns a new Manager using custom values for some of
+// newTaskManagerCustom creates, starts and returns a new TaskManager using custom values for some of
 // the task manager parameters.
 func newTaskManagerCustom(initWorkerCount, channelBufferSize int) *TaskManager {
 	taskChan := make(chan Task, channelBufferSize)

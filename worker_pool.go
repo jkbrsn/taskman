@@ -49,6 +49,10 @@ func (wp *workerPool) targetWorkerCount() int32 {
 	return wp.workerCountTarget.Load()
 }
 
+func (wp *workerPool) availableWorkers() int32 {
+	return wp.runningWorkers() - wp.activeWorkers()
+}
+
 // addWorkers adds to the worker pool by starting new workers.
 func (wp *workerPool) addWorkers(nWorkers int) {
 	log.Info().Msgf("Adding %d new workers to the pool", nWorkers)
@@ -75,6 +79,8 @@ func (pool *workerPool) adjustWorkerCount(newTarget int32) {
 			log.Info().Msgf("Scaling worker pool DOWN from %d to %d workers", currentTarget, newTarget)
 			pool.stopWorkers(int(currentTarget - newTarget))
 		}
+	} else {
+		log.Debug().Msgf("Worker pool already at target worker count %d", newTarget)
 	}
 
 	// Update the target worker count

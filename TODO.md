@@ -19,6 +19,7 @@
   - or should the job be retried next cadence?
 - add a method to pause/stop a job
   - could involve removing it from the queue, to an external list, and then reinserting it when it should be resumed
+- consider adding metrics for channel buffer sizes and queue sizes
 
 # feature ideas
 

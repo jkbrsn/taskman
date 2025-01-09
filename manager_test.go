@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"sync"
 	"testing"
@@ -73,7 +74,7 @@ func getMockedJob(nTasks int, jobID string, cadence, timeToNextExec time.Duratio
 
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
-	setLoggerLevel(zerolog.DebugLevel)
+	setLoggerLevel(zerolog.InfoLevel)
 	os.Exit(m.Run())
 }
 
@@ -431,8 +432,8 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 }
 
 func TestConcurrentScheduleTask(t *testing.T) {
-	// Deactivate debug logs for this test
-	setLoggerLevel(zerolog.InfoLevel)
+	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel) causes a race condition due to
+	//       the logger being shared across tests
 
 	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
@@ -463,8 +464,8 @@ func TestConcurrentScheduleTask(t *testing.T) {
 }
 
 func TestConcurrentScheduleJob(t *testing.T) {
-	// Deactivate debug logs for this test
-	setLoggerLevel(zerolog.InfoLevel)
+	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel) causes a race condition due to
+	//       the logger being shared across tests
 
 	manager := newTaskManagerCustom(10, 1)
 	defer manager.Stop()
@@ -684,4 +685,81 @@ func TestTaskExecutionMetrics(t *testing.T) {
 	// Verify the metrics
 	assert.Equal(t, int64(1), manager.metrTaskCount.Load(), "Expected 1 total task to have been counted")
 	assert.GreaterOrEqual(t, manager.metrAvgExecTime.Load(), executionTime, "Expected task execution time to be at least 10ms")
+}
+
+func TestWorkerPoolScaling(t *testing.T) {
+	// Start a manager with 1 worker
+	manager := newTaskManagerCustom(1, 4)
+	defer manager.Stop()
+
+	t.Run("ScaleUpBasedOnJobWidth", func(t *testing.T) {
+		job := Job{
+			ID:       "test-job-width-scaling",
+			Cadence:  5 * time.Millisecond,
+			NextExec: time.Now().Add(20 * time.Millisecond),
+			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+				log.Debug().Msg("Executing task1")
+				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
+				return nil
+			}}, MockTask{ID: "task2", executeFunc: func() error {
+				log.Debug().Msg("Executing task2")
+				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
+				return nil
+			}}},
+		}
+		err := manager.ScheduleJob(job)
+		assert.Nil(t, err, "Expected no error scheduling job")
+		time.Sleep(5 * time.Millisecond) // Allow time for job to be scheduled + worker pool to scale
+
+		assert.Equal(t, manager.workerPool.targetWorkerCount(), int32(4), "Expected target worker count to be 2 x the job task count")
+	})
+
+	t.Run("ScaleUpBasedOnConcurrencyNeeds", func(t *testing.T) {
+		initialTargetWorkerCount := manager.workerPool.targetWorkerCount()
+		job := Job{
+			ID:       "test-concurrency-need-scaling",
+			Cadence:  5 * time.Millisecond, // Set a low cadence to force scaling up
+			NextExec: time.Now().Add(10 * time.Millisecond),
+			Tasks: []Task{MockTask{ID: "task3", executeFunc: func() error {
+				log.Debug().Msg("Executing task3")
+				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
+				return nil
+			}}},
+		}
+		err := manager.ScheduleJob(job)
+		assert.Nil(t, err, "Expected no error scheduling job")
+
+		// Allow time for job to be scheduled + executed, then scale again
+		time.Sleep(45 * time.Millisecond)
+		manager.scaleWorkerPool(0)
+		time.Sleep(5 * time.Millisecond) // Allow time for worker pool to scale
+
+		// Check greater than rather than an exact number, as computation time may vary
+		assert.Greater(t, manager.workerPool.targetWorkerCount(), initialTargetWorkerCount, "Expected target worker count to be greater than initial count")
+	})
+
+	t.Run("ScaleUpBasedOnImmediateNeed", func(t *testing.T) {
+		initialRunningWorkers := manager.workerPool.runningWorkers()
+		job := Job{
+			ID:       "test-immediate-need-scaling",
+			Cadence:  25 * time.Millisecond, // Set a low cadence to force scaling up
+			NextExec: time.Now().Add(10 * time.Millisecond),
+			Tasks: []Task{
+				MockTask{ID: "task4"},
+				MockTask{ID: "task5"},
+				MockTask{ID: "task6"},
+				MockTask{ID: "task7"},
+			},
+		}
+		err := manager.ScheduleJob(job)
+		assert.Nil(t, err, "Expected no error scheduling job")
+
+		// Allow time for job to be scheduled and scaling to take place
+		time.Sleep(5 * time.Millisecond)
+
+		// Expected worker count is 1.5 x (the current worker count + new task count)
+		expectedWorkerCount := math.Ceil((float64(initialRunningWorkers) + 4.0) * 1.5)
+		assert.Equal(t, int32(expectedWorkerCount), manager.workerPool.targetWorkerCount(), "Expected target worker count to be 23")
+	})
+
 }
