@@ -18,11 +18,11 @@ import (
 var (
 	// ErrManagerStopped is returned when a task is added to a stopped manager.
 	ErrManagerStopped = errors.New("task manager is stopped")
-	// ErrDuplicateJobID is returned when a duplicate job ID is fountm.
+	// ErrDuplicateJobID is returned when a duplicate job ID is found.
 	ErrDuplicateJobID = errors.New("duplicate job ID")
 	// ErrInvalidCadence is returned when a job has an invalid cadence.
 	ErrInvalidCadence = errors.New("job cadence must be greater than 0")
-	// ErrJobNotFound is returned when a job is not fountm.
+	// ErrJobNotFound is returned when a job is not found.
 	ErrJobNotFound = errors.New("job not found")
 	// ErrNoTasks is returned when a job has no tasks.
 	ErrNoTasks = errors.New("job has no tasks")
@@ -471,7 +471,7 @@ func (tm *TaskManager) validateJob(job Job) error {
 	return nil
 }
 
-// calcTasksPerSecond calculates the number of tasks executed per secontm.
+// calcTasksPerSecond calculates the number of tasks executed per second.
 func calcTasksPerSecond(nTasks int, cadence time.Duration) float32 {
 	if cadence == 0 {
 		return 0
