@@ -1,6 +1,7 @@
 package taskman
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -64,27 +65,30 @@ func (wp *workerPool) addWorkers(nWorkers int) {
 }
 
 // adjustWorkerCount adjusts the number of workers in the pool to match the target worker count.
-func (pool *workerPool) adjustWorkerCount(newTarget int32) {
+func (pool *workerPool) adjustWorkerCount(newTargetCount int32) {
 	currentTarget := pool.targetWorkerCount()
 
 	// Add or remove workers as needed
-	if newTarget > currentTarget {
-		log.Info().Msgf("Scaling worker pool UP from %d to %d workers", currentTarget, newTarget)
+	if newTargetCount > currentTarget {
+		log.Info().Msgf("Scaling worker pool UP from %d to %d workers", currentTarget, newTargetCount)
 		// Scale up
-		pool.addWorkers(int(newTarget - currentTarget))
-	} else if newTarget < currentTarget {
+		pool.addWorkers(int(newTargetCount - currentTarget))
+	} else if newTargetCount < currentTarget {
 		// Scale down cautiously
 		utilizationThreshold := 0.3 // If above 30% utilization, do not scale down
 		if pool.utilization() < utilizationThreshold {
-			log.Info().Msgf("Scaling worker pool DOWN from %d to %d workers", currentTarget, newTarget)
-			pool.stopWorkers(int(currentTarget - newTarget))
+			log.Info().Msgf("Scaling worker pool DOWN from %d to %d workers", currentTarget, newTargetCount)
+			err := pool.stopWorkers(int(currentTarget - newTargetCount))
+			if err != nil {
+				log.Warn().Err(err).Msg("Failed to stop workers when scaling down")
+			}
 		}
 	} else {
-		log.Debug().Msgf("Worker pool already at target worker count %d", newTarget)
+		log.Debug().Msgf("Worker pool already at target worker count %d", newTargetCount)
 	}
 
 	// Update the target worker count
-	pool.workerCountTarget.Store(newTarget)
+	pool.workerCountTarget.Store(newTargetCount)
 }
 
 // execTimeChan returns a read-only channel for consuming exec times from task execution.
@@ -195,21 +199,21 @@ func (wp *workerPool) stop() {
 
 // stopWorker signals a specific worker to stop processing tasks and exit. This will also remove
 // the worker from the worker pool.
-// TODO: change to an error return?
-func (wp *workerPool) stopWorker(id xid.ID) {
+func (wp *workerPool) stopWorker(id xid.ID) error {
 	log.Debug().Msgf("Stopping worker %s", id)
 	value, ok := wp.workers.Load(id)
 	if !ok {
-		log.Warn().Msgf("Worker %s not found", id)
-		return
+		log.Debug().Msgf("Worker %s not found", id)
+		return errors.New("worker not found")
 	}
 	workerInfo, ok := value.(*workerInfo)
 	if !ok {
-		log.Warn().Msgf("Worker %s has invalid type", id)
-		return
+		log.Debug().Msgf("Worker %s has invalid type", id)
+		return errors.New("worker has invalid type")
 	}
 	close(workerInfo.stopChan)
 	log.Debug().Msgf("Stop signal sent for worker %s", id)
+	return nil
 }
 
 // stopWorkers stops workers, which removes them from the pool.
@@ -217,21 +221,19 @@ func (wp *workerPool) stopWorker(id xid.ID) {
 // send stop signals to busy workers, which will stop after they finish their current task.
 // Note 2: due to the timing of the stop signal, there is a chance that a worker marked as idle
 // will pick up a task before the stop signal is received, in which case the worker will not stop
-// until it finishes the task.
-func (wp *workerPool) stopWorkers(nWorkers int) {
+// until it finishes the task. This will not block this function.
+func (wp *workerPool) stopWorkers(nWorkers int) error {
 	wp.mu.Lock() // Lock to prevent race conditions while modifying worker state
 	defer wp.mu.Unlock()
 
 	// Validate number of workers to remove
 	if nWorkers <= 0 {
-		log.Warn().Msg("Cannot remove zero or negative workers")
-		// TODO: return error?
-		return
+		log.Debug().Msg("Cannot remove zero or negative workers")
+		return errors.New("cannot remove zero or negative workers")
 	}
 	if nWorkers > int(wp.runningWorkers()) {
-		log.Warn().Msg("Cannot remove more workers than are running")
-		// TODO: return error?
-		return
+		log.Debug().Msg("Cannot remove more workers than are running")
+		return errors.New("cannot remove more workers than are running")
 	}
 	log.Debug().Msgf("Removing %d workers from the pool", nWorkers)
 	idleWorkers := wp.idleWorkers()
@@ -240,14 +242,20 @@ func (wp *workerPool) stopWorkers(nWorkers int) {
 	if len(idleWorkers) >= nWorkers {
 		workersToRemove := idleWorkers[:nWorkers]
 		for _, workerID := range workersToRemove {
-			wp.stopWorker(workerID)
+			err := wp.stopWorker(workerID)
+			if err != nil {
+				log.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
+			}
 		}
-		return
+		return nil
 	}
 
 	// If there aren't enough idle workers, first stop all idle workers
 	for _, workerID := range idleWorkers {
-		wp.stopWorker(workerID)
+		err := wp.stopWorker(workerID)
+		if err != nil {
+			log.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
+		}
 	}
 
 	// Then stop busy workers as well, up to the number of workers to remove
@@ -267,13 +275,18 @@ func (wp *workerPool) stopWorkers(nWorkers int) {
 		})
 	}
 	for _, workerID := range busyWorkers {
-		// TODO: is there a risk that an idle worker will pick up a task before the stop signal is received,
-		// and thus end up in the busyWorkers list? Would risk a panic due to double close of the stop channel.
-		wp.stopWorker(workerID)
+		// TODO: is there a risk that an idle worker will pick up a task before the stop signal is
+		//       received, and thus end up in the busyWorkers list? Would risk a panic due to
+		//       double close of the stop channel.
+		err := wp.stopWorker(workerID)
+		if err != nil {
+			log.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
+		}
 	}
+
+	return nil
 }
 
-// TODO: test this
 // utilization returns the utilization of the worker pool as a float between 0.0 and 1.0.
 func (wp *workerPool) utilization() float64 {
 	if wp.runningWorkers() == 0 {
@@ -300,7 +313,7 @@ func newWorkerPool(
 		execTimeChan:    execTimeChan,
 		stopPoolChan:    make(chan struct{}),
 		taskChan:        taskChan,
-		workerCountChan: make(chan int32), // TODO: make buffered?
+		workerCountChan: make(chan int32),
 		workerPoolDone:  workerPoolDone,
 	}
 	pool.addWorkers(initialWorkers)

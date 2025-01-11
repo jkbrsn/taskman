@@ -314,3 +314,64 @@ func TestStopWorkers(t *testing.T) {
 	assert.Equal(t, 2, len(pool.idleWorkers()), "Expected 2 idle workers")
 	assert.Equal(t, int32(2), pool.runningWorkers(), "Expected 2 running workers")
 }
+
+func TestWorkerPoolUtilization(t *testing.T) {
+	errorChan := make(chan error, 1)
+	execTimeChan := make(chan time.Duration, 1)
+	taskChan := make(chan Task, 1)
+	workerPoolDone := make(chan struct{})
+	pool := newWorkerPool(4, errorChan, execTimeChan, taskChan, workerPoolDone)
+	defer pool.stop()
+
+	time.Sleep(5 * time.Millisecond) // Wait for workers to start
+
+	// Verify initial utilization
+	assert.Equal(t, 0.0, pool.utilization(), "Expected initial utilization to be 0.0")
+
+	// Create tasks that will keep workers busy
+	task1 := &MockTask{
+		executeFunc: func() error {
+			time.Sleep(20 * time.Millisecond)
+			return nil
+		},
+		ID: "task-1",
+	}
+	task2 := task1
+	task2.ID = "task-2"
+
+	// Send tasks to the workers
+	taskChan <- task1
+	taskChan <- task2
+	time.Sleep(5 * time.Millisecond) // Wait for workers to pick up tasks
+
+	// Verify utilization during task execution
+	assert.Equal(t, 0.5, pool.utilization(), "Expected utilization to be 0.5")
+
+	// Create another task to be queued
+	task3 := &MockTask{
+		executeFunc: func() error {
+			time.Sleep(30 * time.Millisecond)
+			return nil
+		},
+		ID: "task-3",
+	}
+
+	// Send the third task while workers are busy
+	taskChan <- task3
+	time.Sleep(5 * time.Millisecond) // Allow some time for task to be queued
+
+	// Verify utilization remains the same as no new worker has picked up the task yet
+	assert.Equal(t, 0.75, pool.utilization(), "Expected utilization to remain 0.5")
+
+	// Wait for the first two tasks to complete
+	time.Sleep(20 * time.Millisecond)
+
+	// Verify utilization after first tasks have completed
+	assert.Equal(t, 0.25, pool.utilization(), "Expected utilization to be 0.25")
+
+	// Wait for the third task to complete
+	time.Sleep(20 * time.Millisecond)
+
+	// Verify utilization after all tasks are done
+	assert.Equal(t, 0.0, pool.utilization(), "Expected utilization to be 0.0")
+}

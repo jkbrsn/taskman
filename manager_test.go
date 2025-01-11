@@ -762,4 +762,5 @@ func TestWorkerPoolScaling(t *testing.T) {
 		assert.Equal(t, int32(expectedWorkerCount), manager.workerPool.targetWorkerCount(), "Expected target worker count to be 23")
 	})
 
+	// TODO: finally, test scale down
 }
