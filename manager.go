@@ -45,12 +45,13 @@ type TaskManager struct {
 	runDone  chan struct{}      // Channel to signal run has stopped
 	stopOnce sync.Once          // Ensures Stop is only called once
 
-	// Shared with worker pool
-	taskChan       chan Task   // Channel to send tasks to the worker pool
-	errorChan      chan error  // Channel to receive errors from the worker pool
-	externalErr    atomic.Bool // Tracks ownership of error channel consumption
+	// Worker pool
 	workerPool     *workerPool
 	workerPoolDone chan struct{} // Channel to receive signal that the worker pool has stopped
+	errorChan      chan error    // Channel to receive errors from the worker pool
+	taskChan       chan Task     // Channel to send tasks to the worker pool
+	externalErr    atomic.Bool   // Tracks ownership of error channel consumption
+	minWorkerCount int32         // Minimum number of workers in the pool
 
 	// Metrics
 	// TODO: move to external metrics component?
@@ -213,7 +214,46 @@ func (tm *TaskManager) RemoveJob(jobID string) error {
 	tm.Lock()
 	defer tm.Unlock()
 
-	return tm.jobQueue.RemoveByID(jobID)
+	jobIndex, err := tm.jobQueue.JobInQueue(jobID)
+	if err != nil {
+		log.Debug().Msgf("Job with ID %s not found", jobID)
+		return ErrJobNotFound
+	}
+	job := tm.jobQueue[jobIndex]
+
+	taskCount := len(job.Tasks)
+	log.Debug().Msgf("Removing job with ID %s and %d tasks", jobID, taskCount)
+
+	err = tm.jobQueue.RemoveByID(jobID)
+	if err != nil {
+		return err
+	}
+
+	// Update task metrics
+	newWidestJob := 0
+	if taskCount == int(tm.metrWidestJob.Load()) {
+		// If the removed job is widest, find the second widest job in the queue
+		for _, j := range tm.jobQueue {
+			// If another job has the same number of tasks, keep the widest job at the same value
+			if len(j.Tasks) == taskCount && j.ID != jobID {
+				newWidestJob = taskCount
+				break
+			}
+			// Otherwise, find the second widest job
+			if len(j.Tasks) > newWidestJob && len(j.Tasks) < taskCount {
+				newWidestJob = len(j.Tasks)
+			}
+		}
+		tm.metrWidestJob.Store(int32(newWidestJob))
+	}
+	metrTasksPerSecond := calcTasksPerSecond(taskCount, job.Cadence)
+	// Update the task metrics with a negative task count to signify removal
+	tm.updateTaskMetrics(-taskCount, metrTasksPerSecond)
+
+	// Scale worker pool if needed
+	tm.scaleWorkerPool(0)
+
+	return nil
 }
 
 // ReplaceJob replaces a job in the TaskManager's queue with a new job, based on their ID:s matching.
@@ -258,14 +298,27 @@ func (tm *TaskManager) Stop() {
 	})
 }
 
-// updateTaskMetrics updates the task metrics.
-func (tm *TaskManager) updateTaskMetrics(additionalTasks int, metrTasksPerSecond float32) {
+// updateTaskMetrics updates the task metrics. The input taskDelta is the number of tasks added or
+// removed, and tasksPerSecond is the number of tasks executed per second by those tasks.
+func (tm *TaskManager) updateTaskMetrics(taskDelta int, tasksPerSecond float32) {
+	currentTaskCount := tm.metrTotalTaskCount.Load()
+	newTaskCount := currentTaskCount + int64(taskDelta)
+
+	// Avoid division by zero
+	if newTaskCount <= 0 {
+		tm.metrTasksPerSecond.Store(0)
+		tm.metrTotalTaskCount.Store(0)
+		return
+	}
+
 	// Update the tasks per second metric base on a weighted average
-	newmetrTasksPerSecond := (metrTasksPerSecond*float32(additionalTasks) + tm.metrTasksPerSecond.Load()*float32(tm.metrTotalTaskCount.Load())) / float32(tm.metrTotalTaskCount.Load()+int64(additionalTasks))
+	newTasksPerSecond := (tasksPerSecond*float32(taskDelta) + tm.metrTasksPerSecond.Load()*float32(currentTaskCount)) / float32(newTaskCount)
 
 	// Store updated values
-	tm.metrTasksPerSecond.Store(newmetrTasksPerSecond)
-	tm.metrTotalTaskCount.Add(int64(additionalTasks))
+	tm.metrTasksPerSecond.Store(newTasksPerSecond)
+	tm.metrTotalTaskCount.Store(newTaskCount)
+
+	log.Debug().Msgf("Task metrics updated: %d tasks, %f tasks/s", newTaskCount, newTasksPerSecond)
 }
 
 // consumeErrorChan handles errors until ErrorChannel() is called.
@@ -320,9 +373,7 @@ func (tm *TaskManager) consumeMetrics() {
 			// remaining workers will need to send exec times before closing
 			return
 		}
-
 	}
-
 }
 
 // jobsInQueue returns the length of the jobQueue slice.
@@ -357,11 +408,11 @@ func (tm *TaskManager) run() {
 			delay := nextJob.NextExec.Sub(now)
 			if delay <= 0 {
 				log.Debug().Msgf("Dispatching job %s", nextJob.ID)
-				heap.Pop(&tm.jobQueue)
+				tasks := nextJob.Tasks
 				tm.Unlock()
 
 				// Dispatch all tasks in the job to the worker pool for execution
-				for _, task := range nextJob.Tasks {
+				for _, task := range tasks {
 					select {
 					case <-tm.ctx.Done():
 						log.Info().Msg("TaskManager received stop signal during task dispatch, exiting run loop")
@@ -372,9 +423,9 @@ func (tm *TaskManager) run() {
 				}
 
 				// Reschedule the job
-				nextJob.NextExec = nextJob.NextExec.Add(nextJob.Cadence)
 				tm.Lock()
-				heap.Push(&tm.jobQueue, nextJob)
+				nextJob.NextExec = nextJob.NextExec.Add(nextJob.Cadence)
+				heap.Fix(&tm.jobQueue, nextJob.index)
 				tm.Unlock()
 				continue
 			}
@@ -403,6 +454,7 @@ func (tm *TaskManager) run() {
 // - The number of tasks in the latest job related to available workers at the moment
 func (tm *TaskManager) scaleWorkerPool(tasksInLatestJob int) {
 	log.Debug().Msg("Scaling worker pool")
+	log.Debug().Msgf("Available/running workers: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
 	bufferFactor50 := 1.5
 	bufferFactor100 := 2.0
 
@@ -424,7 +476,6 @@ func (tm *TaskManager) scaleWorkerPool(tasksInLatestJob int) {
 	// Calculate the number of workers needed based on the number of tasks in the latest job
 	var workersNeededImmediately int32
 	if tm.workerPool.availableWorkers() < int32(tasksInLatestJob) {
-		log.Debug().Msgf("Available/running workers: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
 		log.Debug().Msgf("Tasks in latest job: %d", tasksInLatestJob)
 		// If there are not enough workers to handle the latest job, scale up immediately
 		extraWorkersNeeded := int32(tasksInLatestJob) - tm.workerPool.availableWorkers()
@@ -440,6 +491,10 @@ func (tm *TaskManager) scaleWorkerPool(tasksInLatestJob int) {
 	}
 	if workersNeededImmediately > workersNeeded {
 		workersNeeded = workersNeededImmediately
+	}
+	// Ensure the worker pool has at least the minimum number of workers
+	if workersNeeded < int32(tm.minWorkerCount) {
+		workersNeeded = int32(tm.minWorkerCount)
 	}
 
 	// Adjust the worker pool size
@@ -484,7 +539,7 @@ func newTaskManager(
 	taskChan chan Task,
 	errorChan chan error,
 	execTimeChan chan time.Duration,
-	initWorkerCount int,
+	minWorkerCount int,
 	workerPoolDone chan struct{},
 ) *TaskManager {
 	log.Debug().Msg("Creating new manager")
@@ -499,7 +554,7 @@ func newTaskManager(
 	if execTimeChan == nil {
 		panic("execTimeChan cannot be nil")
 	}
-	if initWorkerCount <= 0 {
+	if minWorkerCount <= 0 {
 		panic("initWorkerCount must be greater than 0")
 	}
 	if workerPoolDone == nil {
@@ -508,7 +563,7 @@ func newTaskManager(
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	workerPool := newWorkerPool(initWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
+	workerPool := newWorkerPool(minWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
 
 	tm := &TaskManager{
 		ctx:            ctx,
@@ -520,6 +575,7 @@ func newTaskManager(
 		taskChan:       taskChan,
 		workerPool:     workerPool,
 		workerPoolDone: workerPoolDone,
+		minWorkerCount: int32(minWorkerCount),
 	}
 
 	heap.Init(&tm.jobQueue)
@@ -538,21 +594,21 @@ func New() *TaskManager {
 	taskChan := make(chan Task, channelBufferSize)
 	errorChan := make(chan error, channelBufferSize)
 	execTimeChan := make(chan time.Duration, channelBufferSize)
-	initialWorkerCount := 4
+	minWorkerCount := 8
 	workerPoolDone := make(chan struct{})
 
-	tm := newTaskManager(taskChan, errorChan, execTimeChan, initialWorkerCount, workerPoolDone)
+	tm := newTaskManager(taskChan, errorChan, execTimeChan, minWorkerCount, workerPoolDone)
 
 	return tm
 }
 
 // newTaskManagerCustom creates, starts and returns a new TaskManager using custom values for some of
 // the task manager parameters.
-func newTaskManagerCustom(initWorkerCount, channelBufferSize int) *TaskManager {
+func newTaskManagerCustom(minWorkerCount, channelBufferSize int) *TaskManager {
 	taskChan := make(chan Task, channelBufferSize)
 	errorChan := make(chan error, channelBufferSize)
 	execTimeChan := make(chan time.Duration, channelBufferSize)
 	workerPoolDone := make(chan struct{})
-	tm := newTaskManager(taskChan, errorChan, execTimeChan, initWorkerCount, workerPoolDone)
+	tm := newTaskManager(taskChan, errorChan, execTimeChan, minWorkerCount, workerPoolDone)
 	return tm
 }

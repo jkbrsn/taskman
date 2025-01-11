@@ -75,13 +75,16 @@ func (pool *workerPool) adjustWorkerCount(newTargetCount int32) {
 		pool.addWorkers(int(newTargetCount - currentTarget))
 	} else if newTargetCount < currentTarget {
 		// Scale down cautiously
-		utilizationThreshold := 0.3 // If above 30% utilization, do not scale down
+		utilizationThreshold := 0.4 // If above 40% utilization, do not scale down
 		if pool.utilization() < utilizationThreshold {
 			log.Info().Msgf("Scaling worker pool DOWN from %d to %d workers", currentTarget, newTargetCount)
 			err := pool.stopWorkers(int(currentTarget - newTargetCount))
 			if err != nil {
 				log.Warn().Err(err).Msg("Failed to stop workers when scaling down")
 			}
+		} else {
+			log.Info().Msgf("Utilization %.2f is above threshold %.2f, not scaling down", pool.utilization(), utilizationThreshold)
+			return // Return early to avoid setting the target worker count
 		}
 	} else {
 		log.Debug().Msgf("Worker pool already at target worker count %d", newTargetCount)

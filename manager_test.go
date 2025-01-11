@@ -692,6 +692,10 @@ func TestWorkerPoolScaling(t *testing.T) {
 	manager := newTaskManagerCustom(1, 4)
 	defer manager.Stop()
 
+	// The first two test cases sets cadences and task execution duration to values producing a predetermined number of
+	// needed workers. The third test case uses a larger number of tasks to force scaling up. The fourth test case uses
+	// removes jobs to force scaling down.
+
 	t.Run("ScaleUpBasedOnJobWidth", func(t *testing.T) {
 		job := Job{
 			ID:       "test-job-width-scaling",
@@ -739,11 +743,13 @@ func TestWorkerPoolScaling(t *testing.T) {
 	})
 
 	t.Run("ScaleUpBasedOnImmediateNeed", func(t *testing.T) {
-		initialRunningWorkers := manager.workerPool.runningWorkers()
+		runningWorkers := manager.workerPool.runningWorkers()
+		availableWorkers := manager.workerPool.availableWorkers()
+
 		job := Job{
 			ID:       "test-immediate-need-scaling",
-			Cadence:  25 * time.Millisecond, // Set a low cadence to force scaling up
-			NextExec: time.Now().Add(10 * time.Millisecond),
+			Cadence:  25 * time.Millisecond,
+			NextExec: time.Now().Add(100 * time.Millisecond),
 			Tasks: []Task{
 				MockTask{ID: "task4"},
 				MockTask{ID: "task5"},
@@ -757,10 +763,40 @@ func TestWorkerPoolScaling(t *testing.T) {
 		// Allow time for job to be scheduled and scaling to take place
 		time.Sleep(5 * time.Millisecond)
 
-		// Expected worker count is 1.5 x (the current worker count + new task count)
-		expectedWorkerCount := math.Ceil((float64(initialRunningWorkers) + 4.0) * 1.5)
-		assert.Equal(t, int32(expectedWorkerCount), manager.workerPool.targetWorkerCount(), "Expected target worker count to be 23")
+		// Expected worker count is 1.5 x (the current worker count + extra workers needed)
+		// Note: we'll assert within a delta here, since the state of the worker pool variables may
+		//       have changed since the time the pool was scaled.
+		expectedWorkerCount := math.Ceil((float64(runningWorkers) + (4.0 - float64(availableWorkers))) * 1.5)
+		assert.InDelta(t, expectedWorkerCount, manager.workerPool.targetWorkerCount(), 2.0, "Expected target worker count to be max 2.0 away from %d", expectedWorkerCount)
 	})
 
-	// TODO: finally, test scale down
+	t.Run("ScaleDown", func(t *testing.T) {
+		initialRunningWorkers := manager.workerPool.runningWorkers()
+		initialTargetWorkerCount := manager.workerPool.targetWorkerCount()
+
+		// Remove a job to allow room to scale down
+		err := manager.RemoveJob("test-job-width-scaling")
+		assert.Nil(t, err, "Expected no error removing job")
+		// Allow time for job removal and scaling attempt
+		time.Sleep(25 * time.Millisecond)
+
+		// Remove another job to actually trigger scaling down, since the utilization likely won't be low enough
+		// unless another job is removed
+		err = manager.RemoveJob("test-concurrency-need-scaling")
+		assert.Nil(t, err, "Expected no error removing job")
+		time.Sleep(10 * time.Millisecond) // Allow time for job to be removed
+
+		// Check that the worker pool has scaled down
+		assert.Less(t, manager.workerPool.runningWorkers(), initialRunningWorkers, "Expected running worker count to be less than initial count")
+		assert.Less(t, manager.workerPool.targetWorkerCount(), initialTargetWorkerCount, "Expected target worker count to be less than initial count")
+	})
+
+	t.Run("RemoveAllJobs", func(t *testing.T) {
+		err := manager.RemoveJob("test-immediate-need-scaling")
+		assert.NoError(t, err, "Expected no error removing job")
+		time.Sleep(5 * time.Millisecond) // Allow time for job to be removed
+
+		// Check that the worker pool has scaled down
+		assert.Equal(t, manager.minWorkerCount, manager.workerPool.targetWorkerCount(), "Expected target worker count to be %d after removing all jobs", manager.minWorkerCount)
+	})
 }
