@@ -217,8 +217,9 @@ func TestStopWorker(t *testing.T) {
 	taskChan <- task
 	time.Sleep(5 * time.Millisecond) // Wait for worker to pick up task
 
-	// Verify active workers during task execution
+	// Verify active/busy workers during task execution
 	assert.Equal(t, int32(1), pool.activeWorkers(), "Expected 1 active worker")
+	assert.Equal(t, 1, len(pool.busyWorkers()), "Expected 1 busy worker")
 
 	// Stop the remaining worker
 	pool.stopWorker(idleWorkers[1])
@@ -286,6 +287,7 @@ func TestStopWorkers(t *testing.T) {
 
 	// Verify active workers during task execution
 	assert.Equal(t, 1, len(pool.idleWorkers()), "Expected 1 idle workers")
+	assert.Equal(t, 3, len(pool.busyWorkers()), "Expected 3 busy workers")
 	assert.Equal(t, int32(3), pool.activeWorkers(), "Expected 3 active workers")
 
 	// Stop more workers than there are idle workers available
@@ -294,6 +296,7 @@ func TestStopWorkers(t *testing.T) {
 
 	// Confirm worker counts again, only 1 worker should have been be stopped
 	assert.Equal(t, 0, len(pool.idleWorkers()), "Expected 0 idle workers")
+	assert.Equal(t, 3, len(pool.busyWorkers()), "Expected 3 busy workers")
 	assert.Equal(t, int32(3), pool.activeWorkers(), "Expected 3 active workers")
 	assert.Equal(t, int32(3), pool.runningWorkers(), "Expected 3 running workers")
 

@@ -91,6 +91,31 @@ func (pool *workerPool) adjustWorkerCount(newTargetCount int32) {
 	pool.workerCountTarget.Store(newTargetCount)
 }
 
+// busyStateWorkers returns two slices of worker IDs:
+// 1. Busy workers
+// 2. Idle workers
+func (wp *workerPool) busyAndIdleWorkers() ([]xid.ID, []xid.ID) {
+	var busyWorkers []xid.ID
+	var idleWorkers []xid.ID
+	wp.workers.Range(func(key, value any) bool {
+		workerID := key.(xid.ID)
+		workerInfo := value.(*workerInfo)
+		if workerInfo.busy.Load() {
+			busyWorkers = append(busyWorkers, workerID)
+		} else {
+			idleWorkers = append(idleWorkers, workerID)
+		}
+		return true
+	})
+	return busyWorkers, idleWorkers
+}
+
+// busyWorkers returns a slice of currently busy workers.
+func (wp *workerPool) busyWorkers() []xid.ID {
+	busyWorkers, _ := wp.busyAndIdleWorkers()
+	return busyWorkers
+}
+
 // execTimeChan returns a read-only channel for consuming exec times from task execution.
 func (wp *workerPool) execTimeChannel() (<-chan time.Duration, error) {
 	return wp.execTimeChan, nil
@@ -98,15 +123,7 @@ func (wp *workerPool) execTimeChannel() (<-chan time.Duration, error) {
 
 // idleWorkers returns a slice of currently idle workers.
 func (wp *workerPool) idleWorkers() []xid.ID {
-	var idleWorkers []xid.ID
-	wp.workers.Range(func(key, value any) bool {
-		workerID := key.(xid.ID)
-		workerInfo := value.(*workerInfo)
-		if !workerInfo.busy.Load() {
-			idleWorkers = append(idleWorkers, workerID)
-		}
-		return true
-	})
+	_, idleWorkers := wp.busyAndIdleWorkers()
 	return idleWorkers
 }
 
@@ -236,7 +253,8 @@ func (wp *workerPool) stopWorkers(nWorkers int) error {
 		return errors.New("cannot remove more workers than are running")
 	}
 	log.Debug().Msgf("Removing %d workers from the pool", nWorkers)
-	idleWorkers := wp.idleWorkers()
+
+	busyWorkers, idleWorkers := wp.busyAndIdleWorkers()
 
 	// Stop a subset of the idle workers if there is an abundance
 	if len(idleWorkers) >= nWorkers {
@@ -260,24 +278,8 @@ func (wp *workerPool) stopWorkers(nWorkers int) error {
 
 	// Then stop busy workers as well, up to the number of workers to remove
 	nWorkers -= len(idleWorkers)
-	var busyWorkers []xid.ID
-	for i := 0; i < nWorkers; i++ {
-		wp.workers.Range(func(key, value any) bool {
-			workerID := key.(xid.ID)
-			workerInfo := value.(*workerInfo)
-			// Confirm busy state before stopping, since not all previously stopped idle workers
-			// may have stopped yet
-			if workerInfo.busy.Load() {
-				busyWorkers = append(busyWorkers, workerID)
-				return false
-			}
-			return true
-		})
-	}
+	busyWorkers = busyWorkers[:nWorkers]
 	for _, workerID := range busyWorkers {
-		// TODO: is there a risk that an idle worker will pick up a task before the stop signal is
-		//       received, and thus end up in the busyWorkers list? Would risk a panic due to
-		//       double close of the stop channel.
 		err := wp.stopWorker(workerID)
 		if err != nil {
 			log.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
