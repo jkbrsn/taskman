@@ -15,6 +15,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+var (
+	testLogLevel = zerolog.InfoLevel
+)
+
 type MockTask struct {
 	ID      string
 	cadence time.Duration
@@ -74,12 +78,12 @@ func getMockedJob(nTasks int, jobID string, cadence, timeToNextExec time.Duratio
 
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
-	setLoggerLevel(zerolog.InfoLevel)
+	setLoggerLevel(testLogLevel)
 	os.Exit(m.Run())
 }
 
 func TestNewTaskManagerCustom(t *testing.T) {
-	manager := newTaskManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
 
 	// Verify jobQueue is initialized
@@ -98,7 +102,7 @@ func TestNewTaskManagerCustom(t *testing.T) {
 
 func TestManagerStop(t *testing.T) {
 	// newTaskManagerCustom starts the task manager
-	manager := newTaskManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2, 1*time.Minute)
 
 	// Immediately stop the manager
 	manager.Stop()
@@ -126,7 +130,7 @@ func TestManagerStop(t *testing.T) {
 }
 
 func TestScheduleFunc(t *testing.T) {
-	manager := newTaskManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2, 1*time.Minute)
 	defer manager.Stop()
 
 	jobID, err := manager.ScheduleFunc(
@@ -147,7 +151,7 @@ func TestScheduleFunc(t *testing.T) {
 }
 
 func TestScheduleTask(t *testing.T) {
-	manager := newTaskManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2, 1*time.Minute)
 	defer manager.Stop()
 
 	testTask := MockTask{ID: "test-task", cadence: 100 * time.Millisecond}
@@ -165,7 +169,7 @@ func TestScheduleTask(t *testing.T) {
 }
 
 func TestScheduleTasks(t *testing.T) {
-	manager := newTaskManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2, 1*time.Minute)
 	defer manager.Stop()
 
 	mockTasks := []MockTask{
@@ -190,7 +194,7 @@ func TestScheduleTasks(t *testing.T) {
 }
 
 func TestScheduleJob(t *testing.T) {
-	manager := newTaskManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2, 1*time.Minute)
 	defer manager.Stop()
 
 	job := getMockedJob(2, "test-job", 100*time.Millisecond, 100*time.Millisecond)
@@ -207,7 +211,7 @@ func TestScheduleJob(t *testing.T) {
 }
 
 func TestRemoveJob(t *testing.T) {
-	manager := newTaskManagerCustom(10, 2)
+	manager := newTaskManagerCustom(10, 2, 1*time.Minute)
 	defer manager.Stop()
 
 	job := getMockedJob(2, "someJob", 100*time.Millisecond, 100*time.Millisecond)
@@ -233,7 +237,7 @@ func TestRemoveJob(t *testing.T) {
 }
 
 func TestReplaceJob(t *testing.T) {
-	manager := newTaskManagerCustom(4, 4)
+	manager := newTaskManagerCustom(4, 4, 1*time.Minute)
 	defer manager.Stop()
 
 	// Add a job
@@ -267,7 +271,7 @@ func TestReplaceJob(t *testing.T) {
 }
 
 func TestTaskExecution(t *testing.T) {
-	manager := newTaskManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -302,7 +306,7 @@ func TestTaskExecution(t *testing.T) {
 func TestTaskRescheduling(t *testing.T) {
 	// Make room in buffered channel for multiple errors (4), since we're not consuming them in this test
 	// and the error channel otherwise blocks the workers from executing tasks
-	manager := newTaskManagerCustom(10, 4)
+	manager := newTaskManagerCustom(10, 4, 1*time.Minute)
 	defer manager.Stop()
 
 	var executionTimes []time.Time
@@ -344,7 +348,7 @@ func TestTaskRescheduling(t *testing.T) {
 }
 
 func TestScheduleTaskDuringExecution(t *testing.T) {
-	manager := newTaskManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
 
 	// Dedicated channels for task execution signals
@@ -435,7 +439,7 @@ func TestConcurrentScheduleTask(t *testing.T) {
 	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel) causes a race condition due to
 	//       the logger being shared across tests
 
-	manager := newTaskManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -467,7 +471,7 @@ func TestConcurrentScheduleJob(t *testing.T) {
 	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel) causes a race condition due to
 	//       the logger being shared across tests
 
-	manager := newTaskManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -496,7 +500,7 @@ func TestConcurrentScheduleJob(t *testing.T) {
 }
 
 func TestZeroCadenceTask(t *testing.T) {
-	manager := newTaskManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
 
 	testChan := make(chan bool)
@@ -518,7 +522,7 @@ func TestZeroCadenceTask(t *testing.T) {
 }
 
 func TestValidateJob(t *testing.T) {
-	manager := newTaskManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
 
 	// Test case: valid job
@@ -575,7 +579,7 @@ func TestValidateJob(t *testing.T) {
 }
 
 func TestErrorChannelConsumption(t *testing.T) {
-	manager := newTaskManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
 
 	// Simulate errors being sent to the error channel
@@ -624,7 +628,7 @@ Loop:
 }
 
 func TestUpdateTaskMetrics(t *testing.T) {
-	manager := newTaskManagerCustom(10, 1)
+	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
 
 	// Initial state
@@ -659,7 +663,7 @@ func TestUpdateTaskMetrics(t *testing.T) {
 }
 
 func TestTaskExecutionMetrics(t *testing.T) {
-	manager := newTaskManagerCustom(2, 2)
+	manager := newTaskManagerCustom(2, 2, 1*time.Minute)
 	defer manager.Stop()
 
 	// Schedule a job with a task that takes 20ms to execute
@@ -689,7 +693,7 @@ func TestTaskExecutionMetrics(t *testing.T) {
 
 func TestWorkerPoolScaling(t *testing.T) {
 	// Start a manager with 1 worker
-	manager := newTaskManagerCustom(1, 4)
+	manager := newTaskManagerCustom(1, 4, 1*time.Minute)
 	defer manager.Stop()
 
 	// The first two test cases sets cadences and task execution duration to values producing a predetermined number of
@@ -799,4 +803,33 @@ func TestWorkerPoolScaling(t *testing.T) {
 		// Check that the worker pool has scaled down
 		assert.Equal(t, manager.minWorkerCount, manager.workerPool.targetWorkerCount(), "Expected target worker count to be %d after removing all jobs", manager.minWorkerCount)
 	})
+}
+
+func TestWorkerPoolPeriodicScaling(t *testing.T) {
+	// Start a manager with 1 worker, and a scaling interval of 40ms. The scaling interval is set
+	// to occur after the first job has executed at least once.
+	manager := newTaskManagerCustom(1, 4, 50*time.Millisecond)
+	defer manager.Stop()
+
+	// Add a job with 4 x longer execution than cadence, resulting in at least 4 workers being
+	// needed although only one additional will be added from scaling based on the job width
+	job := Job{
+		ID:       "test-periodic-scaling",
+		Cadence:  5 * time.Millisecond,
+		NextExec: time.Now().Add(20 * time.Millisecond),
+		Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+			log.Debug().Msg("Executing task1")
+			time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
+			return nil
+		}}},
+	}
+	err := manager.ScheduleJob(job)
+	assert.Nil(t, err, "Expected no error scheduling job")
+	time.Sleep(5 * time.Millisecond) // Allow time for job to be scheduled + worker pool to scale
+
+	assert.Equal(t, manager.workerPool.targetWorkerCount(), int32(2), "Expected target worker count to be 2 x the job task count")
+
+	time.Sleep(50 * time.Millisecond) // Allow time for periodic scaling to occur
+
+	assert.GreaterOrEqual(t, manager.workerPool.targetWorkerCount(), int32(4), "Expected target worker count to be greater or equal than 4")
 }

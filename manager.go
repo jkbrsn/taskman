@@ -52,6 +52,7 @@ type TaskManager struct {
 	taskChan       chan Task     // Channel to send tasks to the worker pool
 	externalErr    atomic.Bool   // Tracks ownership of error channel consumption
 	minWorkerCount int32         // Minimum number of workers in the pool
+	scaleInterval  time.Duration // Interval for automatic scaling of the worker pool
 
 	// Metrics
 	// TODO: move to external metrics component?
@@ -447,14 +448,34 @@ func (tm *TaskManager) run() {
 	}
 }
 
+// periodicWorkerScaling scales the worker pool at regular intervals, based on the state of the
+// job queue. The worker pool is already scaled every time a job is added or removed, but this
+// function provides a way to scale the worker pool over time.
+func (tm *TaskManager) periodicWorkerScaling() {
+	ticker := time.NewTicker(tm.scaleInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			log.Debug().Msg("Periodic worker scaling")
+			// Scale the worker pool based, setting 0 workers needed immediately
+			tm.scaleWorkerPool(0)
+		case <-tm.ctx.Done():
+			log.Info().Msg("TaskManager received stop signal, exiting periodic scaling")
+			return
+		}
+	}
+}
+
 // scaleWorkerPool scales the worker pool based on the current job queue.
 // The worker pool is scaled based on the highest of three metrics:
 // - The widest job in the queue in terms of number of tasks
 // - The average execution time and concurrency of tasks
 // - The number of tasks in the latest job related to available workers at the moment
-func (tm *TaskManager) scaleWorkerPool(tasksInLatestJob int) {
+func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 	log.Debug().Msg("Scaling worker pool")
-	log.Debug().Msgf("Available/running workers: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
+	log.Debug().Msgf("- Available/running workers: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
 	bufferFactor50 := 1.5
 	bufferFactor100 := 2.0
 
@@ -462,27 +483,27 @@ func (tm *TaskManager) scaleWorkerPool(tasksInLatestJob int) {
 	workersNeededParallelTasks := tm.metrWidestJob.Load()
 	// Apply 100% buffer for parallel tasks, as this is a low predictability metric
 	workersNeededParallelTasks = int32(math.Ceil(float64(workersNeededParallelTasks) * bufferFactor100))
-	log.Debug().Msgf("Job width worker need: %d", workersNeededParallelTasks)
+	log.Debug().Msgf("- Job width worker need: %d", workersNeededParallelTasks)
 
 	// Calculate the number of workers needed based on the average execution time and tasks/s
 	avgExecTimeSeconds := tm.metrAvgExecTime.Load().Seconds()
 	tasksPerSecond := float64(tm.metrTasksPerSecond.Load())
-	log.Debug().Msgf("Avg exec time: %v, tasks/s: %f", avgExecTimeSeconds, tasksPerSecond)
+	log.Debug().Msgf("- Avg exec time: %v, tasks/s: %f", avgExecTimeSeconds, tasksPerSecond)
 	workersNeededConcurrently := int32(math.Ceil(avgExecTimeSeconds * tasksPerSecond))
 	// Apply 50% buffer for concurrent tasks, as this is a more predictable metric
 	workersNeededConcurrently = int32(math.Ceil(float64(workersNeededConcurrently) * bufferFactor50))
-	log.Debug().Msgf("Concurrent worker need: %d", workersNeededConcurrently)
+	log.Debug().Msgf("- Concurrent worker need: %d", workersNeededConcurrently)
 
 	// Calculate the number of workers needed based on the number of tasks in the latest job
 	var workersNeededImmediately int32
-	if tm.workerPool.availableWorkers() < int32(tasksInLatestJob) {
-		log.Debug().Msgf("Tasks in latest job: %d", tasksInLatestJob)
+	if tm.workerPool.availableWorkers() < int32(workersNeededNow) {
+		log.Debug().Msgf("- Tasks in latest job: %d", workersNeededNow)
 		// If there are not enough workers to handle the latest job, scale up immediately
-		extraWorkersNeeded := int32(tasksInLatestJob) - tm.workerPool.availableWorkers()
+		extraWorkersNeeded := int32(workersNeededNow) - tm.workerPool.availableWorkers()
 		// Apply 50% buffer for immediate tasks, as this is a more predictable metric
 		workersNeededImmediately = int32(math.Ceil(float64(tm.workerPool.runningWorkers()+extraWorkersNeeded) * bufferFactor50))
 	}
-	log.Debug().Msgf("Immediate worker need: %d", workersNeededImmediately)
+	log.Debug().Msgf("- Immediate worker need: %d", workersNeededImmediately)
 
 	// Use the highest of the three metrics
 	workersNeeded := workersNeededParallelTasks
@@ -500,7 +521,7 @@ func (tm *TaskManager) scaleWorkerPool(tasksInLatestJob int) {
 	// Adjust the worker pool size
 	scalingRequestChan := tm.workerPool.workerCountScalingChannel()
 	scalingRequestChan <- workersNeeded
-	log.Debug().Msgf("Worker pool scaling request sent: %d", workersNeeded)
+	log.Debug().Msgf("- Worker pool scaling request sent: %d", workersNeeded)
 }
 
 // validateJob validates a Job.
@@ -540,6 +561,7 @@ func newTaskManager(
 	errorChan chan error,
 	execTimeChan chan time.Duration,
 	minWorkerCount int,
+	scaleInterval time.Duration,
 	workerPoolDone chan struct{},
 ) *TaskManager {
 	log.Debug().Msg("Creating new manager")
@@ -576,6 +598,7 @@ func newTaskManager(
 		workerPool:     workerPool,
 		workerPoolDone: workerPoolDone,
 		minWorkerCount: int32(minWorkerCount),
+		scaleInterval:  scaleInterval,
 	}
 
 	heap.Init(&tm.jobQueue)
@@ -584,6 +607,7 @@ func newTaskManager(
 	go tm.run()
 	go tm.consumeErrorChan()
 	go tm.consumeMetrics()
+	go tm.periodicWorkerScaling()
 
 	return tm
 }
@@ -595,20 +619,21 @@ func New() *TaskManager {
 	errorChan := make(chan error, channelBufferSize)
 	execTimeChan := make(chan time.Duration, channelBufferSize)
 	minWorkerCount := 8
+	scaleInterval := 1 * time.Minute
 	workerPoolDone := make(chan struct{})
 
-	tm := newTaskManager(taskChan, errorChan, execTimeChan, minWorkerCount, workerPoolDone)
+	tm := newTaskManager(taskChan, errorChan, execTimeChan, minWorkerCount, scaleInterval, workerPoolDone)
 
 	return tm
 }
 
 // newTaskManagerCustom creates, starts and returns a new TaskManager using custom values for some of
 // the task manager parameters.
-func newTaskManagerCustom(minWorkerCount, channelBufferSize int) *TaskManager {
+func newTaskManagerCustom(minWorkerCount, channelBufferSize int, scaleInterval time.Duration) *TaskManager {
 	taskChan := make(chan Task, channelBufferSize)
 	errorChan := make(chan error, channelBufferSize)
 	execTimeChan := make(chan time.Duration, channelBufferSize)
 	workerPoolDone := make(chan struct{})
-	tm := newTaskManager(taskChan, errorChan, execTimeChan, minWorkerCount, workerPoolDone)
+	tm := newTaskManager(taskChan, errorChan, execTimeChan, minWorkerCount, scaleInterval, workerPoolDone)
 	return tm
 }
