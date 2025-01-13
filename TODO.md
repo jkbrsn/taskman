@@ -2,7 +2,6 @@
 
 ## TODO v0.2.0
 
-- take a lap and check function naming and docs, might be some inconsistencies
 - describe worker pool scaling in docs/readme
 
 ## TODO v0.3.0

@@ -9,8 +9,8 @@ import (
 	uatomic "go.uber.org/atomic"
 )
 
-// ManagerMetrics stores metrics about the task manager.
-type ManagerMetrics struct {
+// managerMetrics stores metrics about the task manager.
+type managerMetrics struct {
 	averageExecTime     uatomic.Duration // Average execution time of tasks
 	totalTaskExecutions atomic.Int64     // Total number of tasks executed
 	tasksPerSecond      uatomic.Float32  // Number of tasks executed per second
@@ -21,7 +21,7 @@ type ManagerMetrics struct {
 }
 
 // consumeExecTime consumes execution times and calculates the average execution time of tasks.
-func (mm *ManagerMetrics) consumeExecTime(execTimeChan <-chan time.Duration) {
+func (mm *managerMetrics) consumeExecTime(execTimeChan <-chan time.Duration) {
 	log.Debug().Msg("Started consuming exec time")
 
 	for {
@@ -46,7 +46,7 @@ func (mm *ManagerMetrics) consumeExecTime(execTimeChan <-chan time.Duration) {
 
 // updateTaskMetrics updates the task metrics. The input taskDelta is the number of tasks added or
 // removed, and tasksPerSecond is the number of tasks executed per second by those tasks.
-func (mm *ManagerMetrics) updateTaskMetrics(taskDelta int, taskCadence time.Duration) {
+func (mm *managerMetrics) updateTaskMetrics(taskDelta int, taskCadence time.Duration) {
 	// Calculate the new number of tasks in the queue
 	currentTaskCount := mm.tasksInQueue.Load()
 	newTaskCount := currentTaskCount + int64(taskDelta)

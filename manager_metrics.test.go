@@ -9,7 +9,7 @@ import (
 
 func TestUpdateMetrics(t *testing.T) {
 	doneChan := make(chan struct{})
-	metrics := &ManagerMetrics{
+	metrics := &managerMetrics{
 		done: doneChan,
 	}
 	defer func() { close(doneChan) }()

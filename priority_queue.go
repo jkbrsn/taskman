@@ -2,6 +2,7 @@ package taskman
 
 import (
 	"container/heap"
+	"errors"
 	"time"
 )
 
@@ -54,7 +55,7 @@ func (pq *priorityQueue) JobInQueue(jobID string) (int, error) {
 			return job.index, nil
 		}
 	}
-	return 0, ErrJobNotFound
+	return 0, errors.New("job not found")
 }
 
 // Peek returns the job with the earliest NextExec time.
@@ -73,7 +74,7 @@ func (pq *priorityQueue) RemoveByID(jobID string) error {
 			return nil
 		}
 	}
-	return ErrJobNotFound
+	return errors.New("job not found")
 }
 
 // Update modifies the NextExec time of a job in the heap.

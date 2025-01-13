@@ -37,7 +37,7 @@ func TestJobInQueue(t *testing.T) {
 	assert.Equal(t, 0, index, "Expected job1 to be found at index 0")
 
 	_, err = pq.JobInQueue("job2")
-	assert.ErrorIs(t, err, ErrJobNotFound, "Expected job2 to not be found")
+	assert.Error(t, err, "Expected job2 to not be found")
 }
 
 func TestPeek(t *testing.T) {
@@ -65,7 +65,7 @@ func TestRemoveByID(t *testing.T) {
 	assert.Nil(t, err, "Error when removing job1")
 
 	_, err = pq.JobInQueue("job1")
-	assert.ErrorIs(t, err, ErrJobNotFound, "Expected job1 to not be found after removal")
+	assert.Error(t, err, "Expected job1 to not be found after removal")
 
 	assert.Equal(t, 1, pq.Len(), "Expected queue length to be 1 after removal")
 }
