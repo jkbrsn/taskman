@@ -579,33 +579,22 @@ func TestValidateJob(t *testing.T) {
 }
 
 func TestErrorChannelConsumption(t *testing.T) {
-	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
+	manager := newTaskManagerCustom(10, 2, 1*time.Minute)
 	defer manager.Stop()
 
-	// Simulate errors being sent to the error channel
-	go func() {
-		manager.errorChan <- errors.New("internal error 1")
-		manager.errorChan <- errors.New("internal error 2")
-		time.Sleep(5 * time.Millisecond) // Allow some time for errors to propagate
-	}()
+	// Send error to the error channel before attempting to consume it
+	manager.errorChan <- errors.New("error 1")
 
-	// Verify internal consumption by ensuring no errors remain after consumption
-	time.Sleep(15 * time.Millisecond) // Allow internal consumer to log errors
-
-	// Attempt to call ErrorChannel and transition ownership to the caller
-	errCh, err := manager.ErrorChannel()
-	assert.NoError(t, err, "Expected no error when calling ErrorChannel")
+	// Get the read-only error channel
+	errCh := manager.ErrorChannel()
 	assert.NotNil(t, errCh, "ErrorChannel should return a valid channel")
 
-	// Send additional errors after ownership transition
-	go func() {
-		manager.errorChan <- errors.New("external error 1")
-		manager.errorChan <- errors.New("external error 2")
-	}()
+	// Send additional error
+	manager.errorChan <- errors.New("error 2")
 
-	// Consume errors from the external ErrorChannel
+	// Consume errors from the ErrorChannel
 	receivedErrors := []string{}
-	timeout := time.After(50 * time.Millisecond)
+	timeout := time.After(10 * time.Millisecond)
 
 Loop:
 	for {
@@ -621,10 +610,8 @@ Loop:
 	}
 
 	// Validate that the correct errors were received after transition
-	assert.Contains(t, receivedErrors, "external error 1")
-	assert.Contains(t, receivedErrors, "external error 2")
-	assert.NotContains(t, receivedErrors, "internal error 1", "Errors logged internally should not appear")
-	assert.NotContains(t, receivedErrors, "internal error 2", "Errors logged internally should not appear")
+	assert.Contains(t, receivedErrors, "error 1")
+	assert.Contains(t, receivedErrors, "error 2")
 }
 
 func TestUpdateTaskMetrics(t *testing.T) {

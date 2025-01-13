@@ -120,8 +120,8 @@ func (wp *workerPool) busyWorkers() []xid.ID {
 }
 
 // execTimeChan returns a read-only channel for consuming exec times from task execution.
-func (wp *workerPool) execTimeChannel() (<-chan time.Duration, error) {
-	return wp.execTimeChan, nil
+func (wp *workerPool) execTimeChannel() <-chan time.Duration {
+	return wp.execTimeChan
 }
 
 // idleWorkers returns a slice of currently idle workers.
@@ -180,7 +180,12 @@ func (wp *workerPool) startWorker(id xid.ID) {
 			if err != nil {
 				// No retry policy is implemented, we just log and send the error for now
 				log.Debug().Err(err).Msgf("Worker %s: task execution failed", id)
-				wp.errorChan <- err
+				select {
+				case wp.errorChan <- err:
+					// Error sent successfully
+				default:
+					// Error channel not ready to receive, do nothing
+				}
 			}
 			execTime := time.Since(start)
 			select {

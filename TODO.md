@@ -8,7 +8,9 @@
 
 ## TODO v0.3.0
 
-- re-evaluate hardcoded values of taskman.New()
+- re-evaluate
+  - hardcoded values of taskman.New()
+  - scaling system robustness and scaling speed
 - add an option to execute a job directly when inserted and after that at the regular cadence
   - may already be achievable by setting NextExec = time.Now but should be confirmed and documented
 - add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution

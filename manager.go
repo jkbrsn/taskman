@@ -50,7 +50,6 @@ type TaskManager struct {
 	workerPoolDone chan struct{} // Channel to receive signal that the worker pool has stopped
 	errorChan      chan error    // Channel to receive errors from the worker pool
 	taskChan       chan Task     // Channel to send tasks to the worker pool
-	externalErr    atomic.Bool   // Tracks ownership of error channel consumption
 	minWorkerCount int32         // Minimum number of workers in the pool
 	scaleInterval  time.Duration // Interval for automatic scaling of the worker pool
 
@@ -90,17 +89,9 @@ type Job struct {
 	index int // Index within the heap
 }
 
-// ErrorChannel returns a read-only channel for consuming errors from task execution. Calling this
-// transfers responsibility to consume errors to the caller, which is expected to keep doing so
-// until the TaskManager has completely stopped. Not consuming errors may lead to a block in the
-// worker pool.
-// TODO: redesign default channel consumption
-func (tm *TaskManager) ErrorChannel() (<-chan error, error) {
-	if !tm.externalErr.CompareAndSwap(false, true) {
-		return nil, errors.New("ErrorChannel can only be called once, returning nil")
-
-	}
-	return tm.errorChan, nil
+// ErrorChannel returns a read-only channel for consuming errors from task execution.
+func (tm *TaskManager) ErrorChannel() <-chan error {
+	return tm.errorChan
 }
 
 // ScheduleFunc takes a function and adds it to the TaskManager in a Job. Creates and returns a
@@ -322,39 +313,11 @@ func (tm *TaskManager) updateTaskMetrics(taskDelta int, tasksPerSecond float32) 
 	log.Debug().Msgf("Task metrics updated: %d tasks, %f tasks/s", newTaskCount, newTasksPerSecond)
 }
 
-// consumeErrorChan handles errors until ErrorChannel() is called.
-func (tm *TaskManager) consumeErrorChan() {
-	for {
-		select {
-		case err := <-tm.errorChan:
-			if tm.externalErr.Load() {
-				log.Debug().Err(err).Msg("External caller taking control of error consumption")
-				// Resend the error to the external listener
-				go func(e error) {
-					tm.errorChan <- e
-				}(err)
-				// Close the internal consumer
-				return
-			}
-			// Handle error internally (e.g., log it)
-			log.Debug().Err(err).Msg("Unhandled error")
-		case <-tm.workerPoolDone:
-			// Only stop consuming once the worker pool is done, since any
-			// remaining workers will need to send errors on errorChan
-			return
-		}
-	}
-}
-
 // consumeMetrics consumes execution times from the worker pool, and uses the data to calculate the
 // average execution time of tasks.
 func (tm *TaskManager) consumeMetrics() {
 	log.Debug().Msg("Started consuming metrics")
-	execTimeChan, err := tm.workerPool.execTimeChannel()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get exec time channel")
-		return
-	}
+	execTimeChan := tm.workerPool.execTimeChannel()
 
 	for {
 		select {
@@ -605,7 +568,6 @@ func newTaskManager(
 
 	log.Debug().Msg("Starting TaskManager")
 	go tm.run()
-	go tm.consumeErrorChan()
 	go tm.consumeMetrics()
 	go tm.periodicWorkerScaling()
 
