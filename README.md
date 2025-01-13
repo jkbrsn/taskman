@@ -5,7 +5,7 @@ An efficient and scalable task manager for in-process task scheduling in Go appl
 **Features**
 
 - Defines the interface `Task`, which when implemented allows for easy inclusion of existing structures in the manager.
-- Grouping of tasks into jobs for near-simultaneous execution.
+- Grouping of tasks into `Job`s for near-simultaneous execution.
 - Utilizes a worker pool setup.
   - This allows the manager to limit the number of spawned goroutines to the number of workers in the pool, and thus keeping memory usage down.
   - A priority queue is used to dispatch jobs for execution in the worker pool. The queue is a min heap, minimized by shortest time until next execution.
