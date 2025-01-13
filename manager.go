@@ -6,13 +6,10 @@ import (
 	"errors"
 	"math"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
-
-	uatomic "go.uber.org/atomic"
 )
 
 var (
@@ -42,6 +39,7 @@ type TaskManager struct {
 	// Context and operations
 	ctx      context.Context    // Context for the task manager
 	cancel   context.CancelFunc // Cancel function for the task manager
+	metrics  *ManagerMetrics    // Metrics for the task manager
 	runDone  chan struct{}      // Channel to signal run has stopped
 	stopOnce sync.Once          // Ensures Stop is only called once
 
@@ -52,14 +50,6 @@ type TaskManager struct {
 	taskChan       chan Task     // Channel to send tasks to the worker pool
 	minWorkerCount int32         // Minimum number of workers in the pool
 	scaleInterval  time.Duration // Interval for automatic scaling of the worker pool
-
-	// Metrics
-	// TODO: move to external metrics component?
-	metrAvgExecTime    uatomic.Duration // Average execution time of tasks
-	metrTaskCount      atomic.Int64     // Total number of tasks executed
-	metrTasksPerSecond uatomic.Float32  // Number of tasks executed per second
-	metrTotalTaskCount atomic.Int64     // Total number of tasks in the queue
-	metrWidestJob      atomic.Int32     // Widest job in the queue in terms of number of tasks
 }
 
 // Task is an interface for tasks that can be executed.
@@ -141,11 +131,7 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 
 	// Update task metrics
 	taskCount := len(job.Tasks)
-	if taskCount > int(tm.metrWidestJob.Load()) {
-		tm.metrWidestJob.Store(int32(taskCount))
-	}
-	metrTasksPerSecond := calcTasksPerSecond(taskCount, job.Cadence)
-	tm.updateTaskMetrics(taskCount, metrTasksPerSecond)
+	tm.metrics.updateTaskMetrics(taskCount, job.Cadence)
 
 	// Scale worker pool if needed
 	tm.scaleWorkerPool(taskCount)
@@ -223,7 +209,7 @@ func (tm *TaskManager) RemoveJob(jobID string) error {
 
 	// Update task metrics
 	newWidestJob := 0
-	if taskCount == int(tm.metrWidestJob.Load()) {
+	if taskCount == int(tm.metrics.maxJobWidth.Load()) {
 		// If the removed job is widest, find the second widest job in the queue
 		for _, j := range tm.jobQueue {
 			// If another job has the same number of tasks, keep the widest job at the same value
@@ -236,11 +222,10 @@ func (tm *TaskManager) RemoveJob(jobID string) error {
 				newWidestJob = len(j.Tasks)
 			}
 		}
-		tm.metrWidestJob.Store(int32(newWidestJob))
+		tm.metrics.maxJobWidth.Store(int32(newWidestJob))
 	}
-	metrTasksPerSecond := calcTasksPerSecond(taskCount, job.Cadence)
 	// Update the task metrics with a negative task count to signify removal
-	tm.updateTaskMetrics(-taskCount, metrTasksPerSecond)
+	tm.metrics.updateTaskMetrics(-taskCount, job.Cadence)
 
 	// Scale worker pool if needed
 	tm.scaleWorkerPool(0)
@@ -288,56 +273,6 @@ func (tm *TaskManager) Stop() {
 
 		log.Debug().Msg("TaskManager stopped")
 	})
-}
-
-// updateTaskMetrics updates the task metrics. The input taskDelta is the number of tasks added or
-// removed, and tasksPerSecond is the number of tasks executed per second by those tasks.
-func (tm *TaskManager) updateTaskMetrics(taskDelta int, tasksPerSecond float32) {
-	currentTaskCount := tm.metrTotalTaskCount.Load()
-	newTaskCount := currentTaskCount + int64(taskDelta)
-
-	// Avoid division by zero
-	if newTaskCount <= 0 {
-		tm.metrTasksPerSecond.Store(0)
-		tm.metrTotalTaskCount.Store(0)
-		return
-	}
-
-	// Update the tasks per second metric base on a weighted average
-	newTasksPerSecond := (tasksPerSecond*float32(taskDelta) + tm.metrTasksPerSecond.Load()*float32(currentTaskCount)) / float32(newTaskCount)
-
-	// Store updated values
-	tm.metrTasksPerSecond.Store(newTasksPerSecond)
-	tm.metrTotalTaskCount.Store(newTaskCount)
-
-	log.Debug().Msgf("Task metrics updated: %d tasks, %f tasks/s", newTaskCount, newTasksPerSecond)
-}
-
-// consumeMetrics consumes execution times from the worker pool, and uses the data to calculate the
-// average execution time of tasks.
-func (tm *TaskManager) consumeMetrics() {
-	log.Debug().Msg("Started consuming metrics")
-	execTimeChan := tm.workerPool.execTimeChannel()
-
-	for {
-		select {
-		case execTime := <-execTimeChan:
-			log.Debug().Msgf("Exec time received: %v", execTime)
-			avgExecTime := tm.metrAvgExecTime.Load()
-			taskCount := tm.metrTaskCount.Load()
-
-			// Calculate the new average execution time
-			newAvgExecTime := (avgExecTime*time.Duration(taskCount) + execTime) / time.Duration(taskCount+1)
-
-			// Store the updated metrics
-			tm.metrAvgExecTime.Store(newAvgExecTime)
-			tm.metrTaskCount.Add(1)
-		case <-tm.workerPoolDone:
-			// Only stop consuming once the worker pool is done, since any
-			// remaining workers will need to send exec times before closing
-			return
-		}
-	}
 }
 
 // jobsInQueue returns the length of the jobQueue slice.
@@ -443,14 +378,14 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 	bufferFactor100 := 2.0
 
 	// Calculate the number of workers needed based on the widest job
-	workersNeededParallelTasks := tm.metrWidestJob.Load()
+	workersNeededParallelTasks := tm.metrics.maxJobWidth.Load()
 	// Apply 100% buffer for parallel tasks, as this is a low predictability metric
 	workersNeededParallelTasks = int32(math.Ceil(float64(workersNeededParallelTasks) * bufferFactor100))
 	log.Debug().Msgf("- Job width worker need: %d", workersNeededParallelTasks)
 
 	// Calculate the number of workers needed based on the average execution time and tasks/s
-	avgExecTimeSeconds := tm.metrAvgExecTime.Load().Seconds()
-	tasksPerSecond := float64(tm.metrTasksPerSecond.Load())
+	avgExecTimeSeconds := tm.metrics.averageExecTime.Load().Seconds()
+	tasksPerSecond := float64(tm.metrics.tasksPerSecond.Load())
 	log.Debug().Msgf("- Avg exec time: %v, tasks/s: %f", avgExecTimeSeconds, tasksPerSecond)
 	workersNeededConcurrently := int32(math.Ceil(avgExecTimeSeconds * tasksPerSecond))
 	// Apply 50% buffer for concurrent tasks, as this is a more predictable metric
@@ -510,14 +445,6 @@ func (tm *TaskManager) validateJob(job Job) error {
 	return nil
 }
 
-// calcTasksPerSecond calculates the number of tasks executed per second.
-func calcTasksPerSecond(nTasks int, cadence time.Duration) float32 {
-	if cadence == 0 {
-		return 0
-	}
-	return float32(nTasks) / float32(cadence.Seconds())
-}
-
 // newTaskManager creates, initializes, and starts a new TaskManager.
 func newTaskManager(
 	taskChan chan Task,
@@ -548,11 +475,17 @@ func newTaskManager(
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	metrics := &ManagerMetrics{
+		done: workerPoolDone,
+	}
+	go metrics.consumeExecTime(execTimeChan)
+
 	workerPool := newWorkerPool(minWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
 
 	tm := &TaskManager{
 		ctx:            ctx,
 		cancel:         cancel,
+		metrics:        metrics,
 		jobQueue:       make(priorityQueue, 0),
 		newJobChan:     make(chan bool, 1),
 		errorChan:      errorChan,
@@ -568,7 +501,6 @@ func newTaskManager(
 
 	log.Debug().Msg("Starting TaskManager")
 	go tm.run()
-	go tm.consumeMetrics()
 	go tm.periodicWorkerScaling()
 
 	return tm

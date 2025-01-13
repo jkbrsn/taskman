@@ -119,11 +119,6 @@ func (wp *workerPool) busyWorkers() []xid.ID {
 	return busyWorkers
 }
 
-// execTimeChan returns a read-only channel for consuming exec times from task execution.
-func (wp *workerPool) execTimeChannel() <-chan time.Duration {
-	return wp.execTimeChan
-}
-
 // idleWorkers returns a slice of currently idle workers.
 func (wp *workerPool) idleWorkers() []xid.ID {
 	_, idleWorkers := wp.busyAndIdleWorkers()

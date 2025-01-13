@@ -614,41 +614,6 @@ Loop:
 	assert.Contains(t, receivedErrors, "error 2")
 }
 
-func TestUpdateTaskMetrics(t *testing.T) {
-	manager := newTaskManagerCustom(10, 1, 1*time.Minute)
-	defer manager.Stop()
-
-	// Initial state
-	initialTotalTaskCount := manager.metrTotalTaskCount.Load()
-	initialTasksPerSecond := manager.metrTasksPerSecond.Load()
-
-	// Update stats with new tasks
-	additionalTasks := 5
-	metrTasksPerSecond := float32(2.0)
-	manager.updateTaskMetrics(additionalTasks, metrTasksPerSecond)
-
-	// Verify the metrTotalTaskCount is updated correctly
-	expectedTasksTotal := initialTotalTaskCount + int64(additionalTasks)
-	assert.Equal(t, expectedTasksTotal, manager.metrTotalTaskCount.Load(), "Expected metrTotalTaskCount to be %d, got %d", expectedTasksTotal, manager.metrTotalTaskCount.Load())
-
-	// Verify the metrTasksPerSecond is updated correctly
-	expectedTasksPerSecond := initialTasksPerSecond + float32(2.0)
-	assert.InDelta(t, expectedTasksPerSecond, manager.metrTasksPerSecond.Load(), 0.001, "Expected metrTasksPerSecond to be %f, got %f", expectedTasksPerSecond, manager.metrTasksPerSecond.Load())
-
-	// Update stats with another set of tasks
-	additionalTasks = 10
-	metrTasksPerSecond = float32(3.0)
-	manager.updateTaskMetrics(additionalTasks, metrTasksPerSecond)
-
-	// Verify the metrTotalTaskCount is updated correctly
-	expectedTasksTotal += int64(additionalTasks)
-	assert.Equal(t, expectedTasksTotal, manager.metrTotalTaskCount.Load(), "Expected metrTotalTaskCount to be %d, got %d", expectedTasksTotal, manager.metrTotalTaskCount.Load())
-
-	// Verify the metrTasksPerSecond is updated correctly
-	expectedTasksPerSecond = float32(40) / float32(15)
-	assert.InDelta(t, expectedTasksPerSecond, manager.metrTasksPerSecond.Load(), 0.001, "Expected metrTasksPerSecond to be %f, got %f", expectedTasksPerSecond, manager.metrTasksPerSecond.Load())
-}
-
 func TestTaskExecutionMetrics(t *testing.T) {
 	manager := newTaskManagerCustom(2, 2, 1*time.Minute)
 	defer manager.Stop()
@@ -674,8 +639,8 @@ func TestTaskExecutionMetrics(t *testing.T) {
 	time.Sleep(10 * time.Millisecond) // Allow time for metrics to be updated
 
 	// Verify the metrics
-	assert.Equal(t, int64(1), manager.metrTaskCount.Load(), "Expected 1 total task to have been counted")
-	assert.GreaterOrEqual(t, manager.metrAvgExecTime.Load(), executionTime, "Expected task execution time to be at least 10ms")
+	assert.Equal(t, int64(1), manager.metrics.totalTaskExecutions.Load(), "Expected 1 total task to have been counted")
+	assert.GreaterOrEqual(t, manager.metrics.averageExecTime.Load(), executionTime, "Expected task execution time to be at least 10ms")
 }
 
 func TestWorkerPoolScaling(t *testing.T) {
