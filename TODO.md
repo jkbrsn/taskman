@@ -22,6 +22,10 @@
 - add a method to pause/stop a job
   - could involve removing it from the queue, to an external list, and then reinserting it when it should be resumed
 - consider adding metrics for channel buffer sizes and queue sizes
+- figure out logging
+  - should the package log anything verbosely?
+  - should the package provide a logger interface for the user to implement?
+  - or should the package provide a method to set a logger?
 
 # feature ideas
 
