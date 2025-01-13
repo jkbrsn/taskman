@@ -1,12 +1,20 @@
 # go-taskman
 
-An efficient and scalable task manager for in-process task scheduling in Go applications. The package is designed to handle a large number of concurrently running recurring jobs, while keeping the number of goroutines down. Another main focus is the ability to execute tasks in groups, which in the context of this manager is called a job.
+An efficient and scalable task manager for in-process task scheduling in Go applications. The package is designed to handle a large number of concurrently running recurring jobs, while at the same time keeping the number of goroutines relatively low. A second design focus is the ability of simultaneous task execution, achieved by grouping of tasks into jobs.
 
 **Features**
 
-- Defines the interface `Task`, which when implemented allows for easy inclusion of existing structs in the task manager. Tasks can also be added without implementing the interface.
-- Grouping of tasks into jobs for simultaneous execution. A "solo" recurring task is simply a `Job` with a single `Task` to execute.
-- Utilizes a worker pool setup, limiting the number of goroutines to the number of workers in the pool, where the manager uses a priority queue to dispatch tasks for execution among the workers. The job queue is a min heap, sorted based on min time until next execution.
+- Defines the interface `Task`, which when implemented allows for easy inclusion of existing structures in the manager.
+- Grouping of tasks into jobs for near-simultaneous execution.
+- Utilizes a worker pool setup.
+  - This allows the manager to limit the number of spawned goroutines to the number of workers in the pool, and thus keeping memory usage down.
+  - A priority queue is used to dispatch jobs for execution in the worker pool. The queue is a min heap, minimized by shortest time until next execution.
+- Dynamic worker pool scaling.
+  - The worker pool scales based on the state of the queue;
+    - Largest parallel execution of tasks
+    - Tasks executed per second
+    - Average task execution time
+  - The scaling algorithm is designed to optimize for worker availability, and as such errs on the safe side when it comes to scaling down.
 
 ## Install
 
@@ -35,15 +43,17 @@ jobID, err := manager.ScheduleFunc(
 Full usage of the package involves implementing the `Task` interface and adding tasks to the manager in `Job`s.
 
 ```go
-// Make a select struct implement the Task interface
-type SomeTask struct {
+// Make an arbitrary struct implement the Task interface
+type SomeStruct struct {
 	ID      string
 }
 
-func (st SomeTask) Execute() error {
-	log.Printf("Executing SomeTask with ID: %s", st.ID)
+func (s SomeStruct) Execute() error {
+	log.Printf("Executing SomeStruct with ID: %s", s.ID)
 	return nil
 }
+
+...
 
 // Utilize the implementation when adding a Job
 manager := New()
@@ -54,8 +64,8 @@ job := Job{
     ID:       "job1",
     NextExec: time.Now().Add(10 * time.Second),
     Tasks:    []Task{
-        SomeTask{ID: "task1"},
-        SomeTask{ID: "task2"},
+        SomeStruct{ID: "task1"},
+        SomeStruct{ID: "task2"},
     },
 }
 

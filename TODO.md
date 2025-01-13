@@ -1,9 +1,5 @@
 # Plans for the go-taskman package
 
-## TODO v0.2.0
-
-- describe worker pool scaling in docs/readme
-
 ## TODO v0.3.0
 
 - re-evaluate
