@@ -24,7 +24,7 @@ go get github.com/jakobilobi/go-taskman
 
 ## Usage
 
-The most basic usage is to add functions directly, with the cadence that function should recurr at. In this case, a `jobID` is returned to allow the caller to later modify or remove the job.
+The most basic usage is to add a function directly, along with the cadence that the function execution should recurr at. In this case, a `jobID` is returned to allow the caller to later modify or remove the job.
 
 ```go
 manager := New()
@@ -40,7 +40,7 @@ jobID, err := manager.ScheduleFunc(
 // Handle the err and do something with the job ID
 ```
 
-Full usage of the package involves implementing the `Task` interface and adding tasks to the manager in `Job`s.
+Full usage of the package involves implementing the `Task` interface, and adding tasks to the manager in a `Job`.
 
 ```go
 // Make an arbitrary struct implement the Task interface
@@ -59,10 +59,11 @@ func (s SomeStruct) Execute() error {
 manager := New()
 defer manager.Stop()
 
+// A job with two tasks and a cadence of 10 seconds, set to have its first execution immediately
 job := Job{
     Cadence:  10 * time.Second,
     ID:       "job1",
-    NextExec: time.Now().Add(10 * time.Second),
+    NextExec: time.Now(),
     Tasks:    []Task{
         SomeStruct{ID: "task1"},
         SomeStruct{ID: "task2"},

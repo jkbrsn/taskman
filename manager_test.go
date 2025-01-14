@@ -785,3 +785,94 @@ func TestWorkerPoolPeriodicScaling(t *testing.T) {
 
 	assert.GreaterOrEqual(t, manager.workerPool.targetWorkerCount(), int32(4), "Expected target worker count to be greater or equal than 4")
 }
+
+func TestTaskExecutionAt(t *testing.T) {
+	manager := newCustom(1, 2, 1*time.Minute)
+	defer manager.Stop()
+
+	t.Run("With NextExec as time.Now()", func(t *testing.T) {
+		doneChan := make(chan struct{})
+		job := Job{
+			ID:       "test-instant-execution-1",
+			Cadence:  1 * time.Second,
+			NextExec: time.Now(),
+			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+				close(doneChan)
+				return nil
+			}}},
+		}
+		err := manager.ScheduleJob(job)
+		assert.NoError(t, err, "Expected no error scheduling job")
+		defer manager.RemoveJob(job.ID)
+
+		// Expect the task to execute immediately
+		select {
+		case <-doneChan:
+			// Task executed as expected
+		case <-time.After(1 * time.Millisecond):
+			t.Fatal("Task did not execute immediately")
+		}
+	})
+
+	t.Run("With NextExec before time.Now(), but within Cadence", func(t *testing.T) {
+		doneChan := make(chan struct{})
+		job := Job{
+			ID:       "test-instant-execution-2",
+			Cadence:  1 * time.Second,
+			NextExec: time.Now().Add(-500 * time.Millisecond),
+			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+				close(doneChan)
+				return nil
+			}}},
+		}
+		err := manager.ScheduleJob(job)
+		assert.NoError(t, err, "Expected no error scheduling job")
+		defer manager.RemoveJob(job.ID)
+
+		// Expect the task to execute immediately
+		select {
+		case <-doneChan:
+			// Task executed as expected
+		case <-time.After(1 * time.Millisecond):
+			t.Fatal("Task did not execute immediately")
+		}
+	})
+
+	t.Run("With NextExec more than a Cadence before time.Now()", func(t *testing.T) {
+		doneChan := make(chan struct{})
+		job := Job{
+			ID:       "test-instant-execution-3",
+			Cadence:  1 * time.Second,
+			NextExec: time.Now().Add(-2 * time.Second),
+			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+				close(doneChan)
+				return nil
+			}}},
+		}
+		err := manager.ScheduleJob(job)
+		assert.Error(t, err, "Expected error when scheduling job")
+	})
+
+	t.Run("With NextExec more than once Cadence after time.Now()", func(t *testing.T) {
+		// Use a channel to receive execution times
+		executionTimes := make(chan time.Time, 1)
+		start := time.Now()
+		execDelay := 25 * time.Millisecond
+		job := Job{
+			ID:       "test-instant-execution-4",
+			Cadence:  10 * time.Millisecond,
+			NextExec: time.Now().Add(execDelay),
+			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+				executionTimes <- time.Now()
+				return nil
+			}}},
+		}
+		err := manager.ScheduleJob(job)
+		assert.NoError(t, err, "Expected no error scheduling job")
+
+		// Verify the task executed at the correct time
+		execTime := <-executionTimes
+		elapsed := execTime.Sub(start)
+		assert.GreaterOrEqual(t, elapsed, execDelay, "Task executed after %v, expected around 25ms", elapsed)
+	})
+}
