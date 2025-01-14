@@ -1,12 +1,15 @@
 # Plans for the go-taskman package
 
-## TODO v0.3.0
+## TODO v0.2.1
 
-- re-evaluate
-  - hardcoded values of taskman.New()
-  - scaling system robustness and scaling speed
 - add an option to execute a job directly when inserted and after that at the regular cadence
   - may already be achievable by setting NextExec = time.Now but should be confirmed and documented
+
+## TODO v0.3.0
+
+- evaluate
+  - hardcoded values of taskman.New()
+  - scaling system robustness and scaling speed
 - add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
 - add an option to instantly execute a job in the queue, even though it has some time until next execution
   - use heap.Fix to reposition the job in the heap, https://cs.opensource.google/go/go/+/refs/tags/go1.23.4:src/container/heap/heap.go;l=83
@@ -15,7 +18,8 @@
   - should the job be marked as failed and be dumped?
   - or should the job be retried next cadence?
 - add a method to pause/stop a job
-  - could involve removing it from the queue, to an external list, and then reinserting it when it should be resumed
+  - point would be to not have to remove a job and reinsert it when it should be resumed
+  - could internally involve removing it from the queue, to an separate slice/structure, and then reinserting it when it should be resumed
 - consider adding metrics for channel buffer sizes and queue sizes
 - figure out logging
   - should the package log anything verbosely?
