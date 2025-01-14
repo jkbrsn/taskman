@@ -1,10 +1,5 @@
 # Plans for the go-taskman package
 
-## TODO v0.2.1
-
-- add an option to execute a job directly when inserted and after that at the regular cadence
-  - may already be achievable by setting NextExec = time.Now but should be confirmed and documented
-
 ## TODO v0.3.0
 
 - evaluate

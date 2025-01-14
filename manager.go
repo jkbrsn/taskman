@@ -55,11 +55,11 @@ func (st SimpleTask) Execute() error {
 
 // Job is a container for a group of tasks, with a unique ID and a cadence for scheduling.
 type Job struct {
-	Cadence time.Duration
-	Tasks   []Task
+	Cadence time.Duration // Time between executions of the job
+	Tasks   []Task        // Tasks in the job
 
-	ID       string
-	NextExec time.Time
+	ID       string    // Unique ID for the job
+	NextExec time.Time // The next time the job should be executed
 
 	index int // Index within the heap
 }
@@ -92,7 +92,7 @@ func (tm *TaskManager) ScheduleFunc(function func() error, cadence time.Duration
 // Job requirements:
 // - Cadence must be greater than 0
 // - Job must have at least one task
-// - NextExec must be non-zero and positive
+// - NextExec must not be more than one cadence old, set to time.Now() for instant execution
 // - Job must have an ID, unique within the TaskManager
 func (tm *TaskManager) ScheduleJob(job Job) error {
 	tm.Lock()
@@ -421,9 +421,9 @@ func (tm *TaskManager) validateJob(job Job) error {
 	if len(job.Tasks) == 0 {
 		return errors.New("job has no tasks")
 	}
-	// Jobs with a zero NextExec time are invalid, as they would execute immediately.
-	if job.NextExec.IsZero() {
-		return errors.New("job NextExec time must be non-zero")
+	// Jobs with a NextExec time more than one Cadence old are invalid, as they would re-execute continually.
+	if job.NextExec.Before(time.Now().Add(-job.Cadence)) {
+		return errors.New("job NextExec time must later")
 	}
 	// Job ID:s are unique, so duplicates are invalid.
 	if _, ok := tm.jobQueue.JobInQueue(job.ID); ok == nil {
