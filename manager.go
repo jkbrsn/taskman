@@ -423,7 +423,7 @@ func (tm *TaskManager) validateJob(job Job) error {
 	}
 	// Jobs with a NextExec time more than one Cadence old are invalid, as they would re-execute continually.
 	if job.NextExec.Before(time.Now().Add(-job.Cadence)) {
-		return errors.New("job NextExec time must later")
+		return errors.New("job NextExec is too early")
 	}
 	// Job ID:s are unique, so duplicates are invalid.
 	if _, ok := tm.jobQueue.JobInQueue(job.ID); ok == nil {
