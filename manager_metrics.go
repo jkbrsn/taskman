@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	uatomic "go.uber.org/atomic"
 )
 
@@ -22,12 +21,9 @@ type managerMetrics struct {
 
 // consumeExecTime consumes execution times and calculates the average execution time of tasks.
 func (mm *managerMetrics) consumeExecTime(execTimeChan <-chan time.Duration) {
-	log.Debug().Msg("Started consuming exec time")
-
 	for {
 		select {
 		case execTime := <-execTimeChan:
-			log.Debug().Msgf("Exec time received: %v", execTime)
 			avgExecTime := mm.averageExecTime.Load()
 			taskExecutions := mm.totalTaskExecutions.Load()
 
@@ -72,7 +68,8 @@ func (mm *managerMetrics) updateTaskMetrics(taskDelta int, taskCadence time.Dura
 	mm.tasksPerSecond.Store(newTasksPerSecond)
 	mm.tasksInQueue.Store(newTaskCount)
 
-	log.Debug().Msgf("Task metrics updated: %d running tasks, %f tasks/s", newTaskCount, newTasksPerSecond)
+	// TODO: consider keeping
+	//log.Debug().Msgf("Task metrics updated: %d running tasks, %f tasks/s", newTaskCount, newTasksPerSecond)
 }
 
 // calcTasksPerSecond calculates the number of tasks executed per second.

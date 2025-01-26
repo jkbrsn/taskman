@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -109,7 +110,6 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 	select {
 	case <-tm.ctx.Done():
 		// If the manager is stopped, do not continue adding the job
-		log.Debug().Msg("TaskManager is stopped, not adding job")
 		return errors.New("task manager is stopped")
 	default:
 		// Do nothing if the manager isn't stopped
@@ -129,7 +129,7 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 	select {
 	case <-tm.ctx.Done():
 		// Do nothing if the manager is stopped
-		log.Debug().Msg("TaskManager is stopped, not signaling new task")
+		return errors.New("task manager is stopped")
 	default:
 		select {
 		case tm.newJobChan <- true:
@@ -178,16 +178,14 @@ func (tm *TaskManager) RemoveJob(jobID string) error {
 	tm.Lock()
 	defer tm.Unlock()
 
+	// Get the job from the queue
 	jobIndex, err := tm.jobQueue.JobInQueue(jobID)
 	if err != nil {
-		log.Debug().Msgf("Job with ID %s not found", jobID)
-		return err
+		return fmt.Errorf("job with ID %s not found", jobID)
 	}
 	job := tm.jobQueue[jobIndex]
 
-	taskCount := len(job.Tasks)
-	log.Debug().Msgf("Removing job with ID %s and %d tasks", jobID, taskCount)
-
+	// Remove the job from the queue
 	err = tm.jobQueue.RemoveByID(jobID)
 	if err != nil {
 		return err
@@ -195,6 +193,7 @@ func (tm *TaskManager) RemoveJob(jobID string) error {
 
 	// Update task metrics
 	newWidestJob := 0
+	taskCount := len(job.Tasks)
 	if taskCount == int(tm.metrics.maxJobWidth.Load()) {
 		// If the removed job is widest, find the second widest job in the queue
 		for _, j := range tm.jobQueue {
@@ -226,11 +225,13 @@ func (tm *TaskManager) ReplaceJob(newJob Job) error {
 	tm.Lock()
 	defer tm.Unlock()
 
+	// Get the job's index in the queue
 	jobIndex, err := tm.jobQueue.JobInQueue(newJob.ID)
 	if err != nil {
 		return errors.New("job not found")
 	}
-	log.Debug().Msgf("Replacing job with ID: %s", newJob.ID)
+
+	// Replace the job in the queue
 	oldJob := tm.jobQueue[jobIndex]
 	newJob.NextExec = oldJob.NextExec
 	newJob.index = oldJob.index
@@ -241,7 +242,6 @@ func (tm *TaskManager) ReplaceJob(newJob Job) error {
 // Stop signals the TaskManager to stop processing tasks and exit.
 // Note: blocks until the TaskManager, including all workers, has completely stopped.
 func (tm *TaskManager) Stop() {
-	log.Debug().Msg("Attempting TaskManager stop")
 	tm.stopOnce.Do(func() {
 		// Signal the manager to stop
 		tm.cancel()
@@ -258,7 +258,8 @@ func (tm *TaskManager) Stop() {
 		close(tm.errorChan)
 		close(tm.taskChan)
 
-		log.Debug().Msg("TaskManager stopped")
+		// TODO: consider keeping
+		//log.Debug().Msg("TaskManager stopped")
 	})
 }
 
@@ -273,7 +274,6 @@ func (tm *TaskManager) jobsInQueue() int {
 // run runs the TaskManager.
 func (tm *TaskManager) run() {
 	defer func() {
-		log.Debug().Msg("TaskManager run loop exiting")
 		close(tm.runDone)
 	}()
 	for {
@@ -282,10 +282,10 @@ func (tm *TaskManager) run() {
 			tm.Unlock()
 			select {
 			case <-tm.newJobChan:
-				log.Trace().Msg("New job added, checking for next job")
+				// New job added, checking for next job
 				continue
 			case <-tm.ctx.Done():
-				log.Info().Msg("TaskManager received stop signal, exiting run loop")
+				// TaskManager received stop signal, exiting run loop
 				return
 			}
 		} else {
@@ -293,7 +293,8 @@ func (tm *TaskManager) run() {
 			now := time.Now()
 			delay := nextJob.NextExec.Sub(now)
 			if delay <= 0 {
-				log.Debug().Msgf("Dispatching job %s", nextJob.ID)
+				// TODO: consider keeping
+				//log.Debug().Msgf("Dispatching job %s", nextJob.ID)
 				tasks := nextJob.Tasks
 				tm.Unlock()
 
@@ -301,7 +302,7 @@ func (tm *TaskManager) run() {
 				for _, task := range tasks {
 					select {
 					case <-tm.ctx.Done():
-						log.Info().Msg("TaskManager received stop signal during task dispatch, exiting run loop")
+						// TaskManager received stop signal during task dispatch, exiting run loop
 						return
 					case tm.taskChan <- task:
 						// Successfully sent the task
@@ -326,7 +327,7 @@ func (tm *TaskManager) run() {
 				// A new job was added, check for the next job
 				continue
 			case <-tm.ctx.Done():
-				log.Info().Msg("TaskManager received stop signal during wait, exiting run loop")
+				// TaskManager received stop signal during wait, exiting run loop
 				return
 			}
 		}
@@ -343,11 +344,10 @@ func (tm *TaskManager) periodicWorkerScaling() {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debug().Msg("Periodic worker scaling")
 			// Scale the worker pool based, setting 0 workers needed immediately
 			tm.scaleWorkerPool(0)
 		case <-tm.ctx.Done():
-			log.Info().Msg("TaskManager received stop signal, exiting periodic scaling")
+			// TaskManager received stop signal, exiting periodic scaling
 			return
 		}
 	}
@@ -359,8 +359,9 @@ func (tm *TaskManager) periodicWorkerScaling() {
 // - The average execution time and concurrency of tasks
 // - The number of tasks in the latest job related to available workers at the moment
 func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
-	log.Debug().Msg("Scaling worker pool")
-	log.Debug().Msgf("- Available/running workers: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
+	// TODO: consider keeping logs in this function
+	// log.Debug().Msg("Scaling worker pool")
+	// log.Debug().Msgf("- Available/running workers: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
 	bufferFactor50 := 1.5
 	bufferFactor100 := 2.0
 
@@ -368,27 +369,27 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 	workersNeededParallelTasks := tm.metrics.maxJobWidth.Load()
 	// Apply the larger buffer factor for parallel tasks, as this is a low predictability metric
 	workersNeededParallelTasks = int32(math.Ceil(float64(workersNeededParallelTasks) * bufferFactor100))
-	log.Debug().Msgf("- Job width worker need: %d", workersNeededParallelTasks)
+	//log.Debug().Msgf("- Job width worker need: %d", workersNeededParallelTasks)
 
 	// Calculate the number of workers needed based on the average execution time and tasks/s
 	avgExecTimeSeconds := tm.metrics.averageExecTime.Load().Seconds()
 	tasksPerSecond := float64(tm.metrics.tasksPerSecond.Load())
-	log.Debug().Msgf("- Avg exec time: %v, tasks/s: %f", avgExecTimeSeconds, tasksPerSecond)
+	//log.Debug().Msgf("- Avg exec time: %v, tasks/s: %f", avgExecTimeSeconds, tasksPerSecond)
 	workersNeededConcurrently := int32(math.Ceil(avgExecTimeSeconds * tasksPerSecond))
 	// Apply the smaller buffer factor for concurrent tasks, as this is a more predictable metric
 	workersNeededConcurrently = int32(math.Ceil(float64(workersNeededConcurrently) * bufferFactor50))
-	log.Debug().Msgf("- Concurrent worker need: %d", workersNeededConcurrently)
+	//log.Debug().Msgf("- Concurrent worker need: %d", workersNeededConcurrently)
 
 	// Calculate the number of workers needed right now
 	var workersNeededImmediately int32
 	if tm.workerPool.availableWorkers() < int32(workersNeededNow) {
-		log.Debug().Msgf("- Tasks in latest job: %d", workersNeededNow)
+		//log.Debug().Msgf("- Tasks in latest job: %d", workersNeededNow)
 		// If there are not enough workers to handle the incoming job, scale up immediately
 		extraWorkersNeeded := int32(workersNeededNow) - tm.workerPool.availableWorkers()
 		// Apply the smaller buffer factor for immediate tasks, as this is a more predictable metric
 		workersNeededImmediately = int32(math.Ceil(float64(tm.workerPool.runningWorkers()+extraWorkersNeeded) * bufferFactor50))
 	}
-	log.Debug().Msgf("- Immediate worker need: %d", workersNeededImmediately)
+	//log.Debug().Msgf("- Immediate worker need: %d", workersNeededImmediately)
 
 	// Use the highest of the three metrics
 	workersNeeded := workersNeededParallelTasks
@@ -406,7 +407,7 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 	// Adjust the worker pool size
 	scalingRequestChan := tm.workerPool.workerCountScalingChannel()
 	scalingRequestChan <- workersNeeded
-	log.Debug().Msgf("- Worker pool scaling request sent: %d", workersNeeded)
+	//log.Debug().Msgf("- Worker pool scaling request sent: %d", workersNeeded)
 }
 
 // validateJob validates a Job.
@@ -441,8 +442,6 @@ func newTaskManager(
 	scaleInterval time.Duration,
 	workerPoolDone chan struct{},
 ) *TaskManager {
-	log.Debug().Msg("Creating new manager")
-
 	// Input validation
 	if taskChan == nil {
 		panic("taskChan cannot be nil")
@@ -487,7 +486,6 @@ func newTaskManager(
 
 	heap.Init(&tm.jobQueue)
 
-	log.Debug().Msg("Starting TaskManager")
 	go tm.run()
 	go tm.periodicWorkerScaling()
 
