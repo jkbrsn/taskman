@@ -5,7 +5,7 @@
 - evaluate
   - hardcoded values of taskman.New()
   - scaling system robustness and scaling speed
-- add an option to execute a job only once, e.g. a "one-hit" job, either with immediate or delayed execution
+- add an option to execute a job a select amount of times, e.g. a "one-hit" or "multi-hit" job, either with immediate or delayed execution
 - add an option to instantly execute a job in the queue, even though it has some time until next execution
   - use heap.Fix to reposition the job in the heap, https://cs.opensource.google/go/go/+/refs/tags/go1.23.4:src/container/heap/heap.go;l=83
 - figure out how to handle panics in the worker goroutines
