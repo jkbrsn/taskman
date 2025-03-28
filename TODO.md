@@ -17,8 +17,7 @@
   - could internally involve removing it from the queue, to an separate slice/structure, and then reinserting it when it should be resumed
 - consider adding metrics for channel buffer sizes and queue sizes
 - figure out logging
-  - a lot of the "unnecessary" logs have been cleaned out but...
-  - should the package log anything verbosely?
+  - should the package log anything verbosely? let it be configurable
   - should the package provide a logger interface for the user to implement?
   - or should the package provide a method to set a logger?
 
