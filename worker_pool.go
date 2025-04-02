@@ -1,13 +1,13 @@
 package taskman
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/rs/xid"
-	"github.com/rs/zerolog/log"
 )
 
 // workerPool manages a pool of workers that execute tasks.
@@ -56,7 +56,7 @@ func (wp *workerPool) availableWorkers() int32 {
 
 // addWorkers adds to the worker pool by starting new workers.
 func (wp *workerPool) addWorkers(nWorkers int) {
-	log.Debug().Msgf("Adding %d new workers to the pool", nWorkers)
+	logger.Debug().Msgf("Adding %d new workers to the pool", nWorkers)
 	wp.wg.Add(nWorkers)
 	for range nWorkers {
 		workerID := xid.New()
@@ -71,24 +71,24 @@ func (pool *workerPool) adjustWorkerCount(newTargetCount int32) {
 
 	// Add or remove workers as needed
 	if newTargetCount > currentTarget {
-		log.Debug().Msgf("Scaling worker pool UP from %d to %d workers", currentTarget, newTargetCount)
+		logger.Debug().Msgf("Scaling worker pool UP from %d to %d workers", currentTarget, newTargetCount)
 		// Scale up
 		pool.addWorkers(int(newTargetCount - currentTarget))
 	} else if newTargetCount < currentTarget {
 		// Scale down cautiously
 		utilizationThreshold := 0.4 // If above 40% utilization, do not scale down
 		if pool.utilization() < utilizationThreshold {
-			log.Debug().Msgf("Scaling worker pool DOWN from %d to %d workers", currentTarget, newTargetCount)
+			logger.Debug().Msgf("Scaling worker pool DOWN from %d to %d workers", currentTarget, newTargetCount)
 			err := pool.stopWorkers(int(currentTarget - newTargetCount))
 			if err != nil {
-				log.Warn().Err(err).Msg("Failed to stop workers when scaling down")
+				logger.Warn().Err(err).Caller().Msg("Failed to stop workers when scaling down")
 			}
 		} else {
-			log.Debug().Msgf("Utilization %.2f is above threshold %.2f, not scaling down", pool.utilization(), utilizationThreshold)
+			logger.Debug().Msgf("Utilization %.2f is above threshold %.2f, not scaling down", pool.utilization(), utilizationThreshold)
 			return // Return early to avoid setting the target worker count
 		}
 	} else {
-		log.Debug().Msgf("Worker pool already at target worker count %d", newTargetCount)
+		logger.Debug().Msgf("Worker pool already at target worker count %d", newTargetCount)
 	}
 
 	// Update the target worker count
@@ -141,7 +141,7 @@ func (wp *workerPool) processWorkerCountScaling() {
 
 // startWorker executes tasks from the task channel.
 func (wp *workerPool) startWorker(id xid.ID) {
-	log.Debug().Msgf("Starting worker %s", id)
+	logger.Debug().Msgf("Starting worker %s", id)
 
 	wp.workersRunning.Add(1)
 	worker := &workerInfo{
@@ -161,10 +161,10 @@ func (wp *workerPool) startWorker(id xid.ID) {
 		select {
 		case task, ok := <-wp.taskChan:
 			if !ok {
-				log.Debug().Msgf("Worker %s: task channel closed, exiting", id)
+				logger.Debug().Msgf("Worker %s: task channel closed, exiting", id)
 				return
 			}
-			log.Trace().Msgf("Worker %s executing task", id)
+			logger.Trace().Msgf("Worker %s executing task", id)
 
 			// Update worker state
 			worker.busy.Store(true)
@@ -193,14 +193,14 @@ func (wp *workerPool) startWorker(id xid.ID) {
 			// Update worker state
 			worker.busy.Store(false)
 			wp.workersActive.Add(-1)
-			log.Trace().Msgf("Worker %s: finished task", id)
+			logger.Trace().Msgf("Worker %s: finished task", id)
 
 		case <-worker.stopChan:
-			log.Debug().Msgf("Worker %s: received targeted stop signal, exiting", id)
+			logger.Debug().Msgf("Worker %s: received targeted stop signal, exiting", id)
 			return
 
 		case <-wp.stopPoolChan:
-			log.Debug().Msgf("Worker %s: received global stop signal, exiting", id)
+			logger.Debug().Msgf("Worker %s: received global stop signal, exiting", id)
 			return
 		}
 	}
@@ -237,55 +237,56 @@ func (wp *workerPool) stopWorker(id xid.ID) error {
 // Note 2: due to the timing of the stop signal, there is a chance that a worker marked as idle
 // will pick up a task before the stop signal is received, in which case the worker will not stop
 // until it finishes the task. This will not block this function.
-func (wp *workerPool) stopWorkers(nWorkers int) error {
+func (wp *workerPool) stopWorkers(workersToStop int) error {
 	wp.mu.Lock() // Lock to prevent race conditions while modifying worker state
 	defer wp.mu.Unlock()
 
 	// Validate number of workers to remove
-	if nWorkers <= 0 {
-		return fmt.Errorf("invalid number of workers to remove: %d", nWorkers)
+	if workersToStop <= 0 {
+		return fmt.Errorf("invalid number of workers to remove: %d", workersToStop)
 	}
-	if nWorkers > int(wp.runningWorkers()) {
-		return fmt.Errorf("cannot remove %d out of %d running workers", nWorkers, wp.runningWorkers())
+	if workersToStop > int(wp.runningWorkers()) {
+		return fmt.Errorf("cannot remove %d out of %d running workers", workersToStop, wp.runningWorkers())
 	}
-	log.Debug().Msgf("Removing %d workers from the pool", nWorkers)
+	logger.Debug().Msgf("Removing %d workers from the pool", workersToStop)
 
 	busyWorkers, idleWorkers := wp.busyAndIdleWorkers()
 
 	// Stop a subset of the idle workers if there is an abundance
-	if len(idleWorkers) >= nWorkers {
-		workersToRemove := idleWorkers[:nWorkers]
+	var errs error
+	if len(idleWorkers) >= workersToStop {
+		workersToRemove := idleWorkers[:workersToStop]
 		for _, workerID := range workersToRemove {
 			err := wp.stopWorker(workerID)
 			if err != nil {
-				// TODO: return error?
-				log.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
+				errs = errors.Join(errs, err)
+				logger.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
 			}
 		}
-		return nil
+		return errs
 	}
 
 	// If there aren't enough idle workers, first stop all idle workers
 	for _, workerID := range idleWorkers {
 		err := wp.stopWorker(workerID)
 		if err != nil {
-			// TODO: return error?
-			log.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
+			errs = errors.Join(errs, err)
+			logger.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
 		}
 	}
 
 	// Then stop busy workers as well, up to the number of workers to remove
-	nWorkers -= len(idleWorkers)
-	busyWorkers = busyWorkers[:nWorkers]
+	workersToStop -= len(idleWorkers)
+	busyWorkers = busyWorkers[:workersToStop]
 	for _, workerID := range busyWorkers {
 		err := wp.stopWorker(workerID)
 		if err != nil {
-			// TODO: return error?
-			log.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
+			errs = errors.Join(errs, err)
+			logger.Debug().Err(err).Msgf("Failed to stop worker %s", workerID)
 		}
 	}
 
-	return nil
+	return errs
 }
 
 // utilization returns the utilization of the worker pool as a float between 0.0 and 1.0.

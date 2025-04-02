@@ -24,6 +24,8 @@ go get github.com/jakobilobi/go-taskman
 
 ## Usage
 
+### Basic usage
+
 The most basic usage is to add a function directly, along with the cadence that the function execution should recurr at. In this case, a `jobID` is returned to allow the caller to later modify or remove the job.
 
 ```go
@@ -39,6 +41,8 @@ jobID, err := manager.ScheduleFunc(
 )
 // Handle the err and do something with the job ID
 ```
+
+### Advanced usage
 
 Full usage of the package involves implementing the `Task` interface, and adding tasks to the manager in a `Job`.
 
@@ -72,6 +76,19 @@ job := Job{
 
 err := manager.ScheduleJob(job)
 // Handle the err
+```
+
+### Logging
+
+The package uses `zerolog` for logging. Without any action, the package will initialize a no-op logger. A custom logger can be set using the `SetLogger` function, or the `InitDefaultLogger` function can be called to initialize a default logger set to `InfoLevel`.
+
+```go
+// Set a custom logger
+logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
+taskman.SetLogger(logger)
+
+// Initialize the default logger
+taskman.InitDefaultLogger()
 ```
 
 ## Contributing

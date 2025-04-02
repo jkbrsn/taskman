@@ -6,12 +6,28 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/rs/xid"
-	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog"
 )
+
+var (
+	// Package-level logger that defaults to a no-op logger
+	logger = zerolog.New(zerolog.NewTestWriter(nil)).Level(zerolog.Disabled)
+)
+
+// SetLogger allows users to inject their own logger for the entire package
+func SetLogger(l zerolog.Logger) {
+	logger = l
+}
+
+// InitDefaultLogger initializes the package logger with default settings
+func InitDefaultLogger() {
+	logger = zerolog.New(os.Stdout).With().Timestamp().Logger().Level(zerolog.InfoLevel)
+}
 
 // TaskManager manages task scheduling and execution. Tasks are scheduled within Jobs, and the
 // manager dispatches scheduled jobs to a worker pool for execution.
@@ -104,7 +120,7 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 	if err != nil {
 		return err
 	}
-	log.Debug().Msgf("Scheduling job with %d tasks with ID '%s' and cadence %v", len(job.Tasks), job.ID, job.Cadence)
+	logger.Debug().Msgf("Scheduling job with %d tasks with ID '%s' and cadence %v", len(job.Tasks), job.ID, job.Cadence)
 
 	// Check if the task manager is stopped
 	select {
@@ -133,7 +149,7 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 	default:
 		select {
 		case tm.newJobChan <- true:
-			log.Trace().Msg("Signaled new job added")
+			logger.Trace().Msg("Signaled new job added")
 		default:
 			// Do nothing if no one is listening
 		}
@@ -258,7 +274,7 @@ func (tm *TaskManager) Stop() {
 		close(tm.errorChan)
 		close(tm.taskChan)
 
-		log.Debug().Msg("TaskManager stopped")
+		logger.Debug().Msg("TaskManager stopped")
 	})
 }
 
@@ -292,7 +308,7 @@ func (tm *TaskManager) run() {
 			now := time.Now()
 			delay := nextJob.NextExec.Sub(now)
 			if delay <= 0 {
-				log.Trace().Msgf("Dispatching job %s", nextJob.ID)
+				logger.Trace().Msgf("Dispatching job %s", nextJob.ID)
 				tasks := nextJob.Tasks
 				tm.Unlock()
 
@@ -357,7 +373,7 @@ func (tm *TaskManager) periodicWorkerScaling() {
 // - The average execution time and concurrency of tasks
 // - The number of tasks in the latest job related to available workers at the moment
 func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
-	log.Debug().Msgf("Scaling workers, available/running: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
+	logger.Debug().Msgf("Scaling workers, available/running: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
 	bufferFactor50 := 1.5
 	bufferFactor100 := 2.0
 
@@ -392,7 +408,7 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 	// Adjust the worker pool size
 	scalingRequestChan := tm.workerPool.workerCountScalingChannel()
 	scalingRequestChan <- workersNeeded
-	log.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
+	logger.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
 }
 
 // validateJob validates a Job.

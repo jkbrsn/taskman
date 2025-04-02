@@ -27,7 +27,7 @@ type MockTask struct {
 }
 
 func (mt MockTask) Execute() error {
-	log.Debug().Msgf("Executing MockTask with ID: %s", mt.ID)
+	logger.Debug().Msgf("Executing MockTask with ID: %s", mt.ID)
 	if mt.executeFunc != nil {
 		err := mt.executeFunc()
 		if err != nil {
@@ -285,7 +285,7 @@ func TestTaskExecution(t *testing.T) {
 		ID:      "test-execution-task",
 		cadence: 100 * time.Millisecond,
 		executeFunc: func() error {
-			log.Debug().Msg("Executing TestTaskExecution task")
+			logger.Debug().Msg("Executing TestTaskExecution task")
 			executionTimes <- time.Now()
 			wg.Done()
 			return nil
@@ -517,7 +517,7 @@ func TestZeroCadenceTask(t *testing.T) {
 		t.Fatal("Task with zero cadence should not execute")
 	case <-time.After(50 * time.Millisecond):
 		// After 50ms, the task would have executed if it was scheduled
-		log.Debug().Msg("Task with zero cadence never executed")
+		logger.Debug().Msg("Task with zero cadence never executed")
 	}
 }
 
@@ -658,11 +658,11 @@ func TestWorkerPoolScaling(t *testing.T) {
 			Cadence:  5 * time.Millisecond,
 			NextExec: time.Now().Add(20 * time.Millisecond),
 			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
-				log.Debug().Msg("Executing task1")
+				logger.Debug().Msg("Executing task1")
 				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 				return nil
 			}}, MockTask{ID: "task2", executeFunc: func() error {
-				log.Debug().Msg("Executing task2")
+				logger.Debug().Msg("Executing task2")
 				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 				return nil
 			}}},
@@ -681,7 +681,7 @@ func TestWorkerPoolScaling(t *testing.T) {
 			Cadence:  5 * time.Millisecond, // Set a low cadence to force scaling up
 			NextExec: time.Now().Add(10 * time.Millisecond),
 			Tasks: []Task{MockTask{ID: "task3", executeFunc: func() error {
-				log.Debug().Msg("Executing task3")
+				logger.Debug().Msg("Executing task3")
 				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 				return nil
 			}}},
@@ -770,7 +770,7 @@ func TestWorkerPoolPeriodicScaling(t *testing.T) {
 		Cadence:  5 * time.Millisecond,
 		NextExec: time.Now().Add(20 * time.Millisecond),
 		Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
-			log.Debug().Msg("Executing task1")
+			logger.Debug().Msg("Executing task1")
 			time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 			return nil
 		}}},
