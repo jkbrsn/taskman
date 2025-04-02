@@ -67,9 +67,6 @@ func (mm *managerMetrics) updateTaskMetrics(taskDelta int, taskCadence time.Dura
 	// Store updated values
 	mm.tasksPerSecond.Store(newTasksPerSecond)
 	mm.tasksInQueue.Store(newTaskCount)
-
-	// TODO: consider keeping
-	//log.Debug().Msgf("Task metrics updated: %d running tasks, %f tasks/s", newTaskCount, newTasksPerSecond)
 }
 
 // calcTasksPerSecond calculates the number of tasks executed per second.

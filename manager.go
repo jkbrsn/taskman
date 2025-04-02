@@ -258,8 +258,7 @@ func (tm *TaskManager) Stop() {
 		close(tm.errorChan)
 		close(tm.taskChan)
 
-		// TODO: consider keeping
-		//log.Debug().Msg("TaskManager stopped")
+		log.Debug().Msg("TaskManager stopped")
 	})
 }
 
@@ -293,8 +292,7 @@ func (tm *TaskManager) run() {
 			now := time.Now()
 			delay := nextJob.NextExec.Sub(now)
 			if delay <= 0 {
-				// TODO: consider keeping
-				//log.Debug().Msgf("Dispatching job %s", nextJob.ID)
+				log.Trace().Msgf("Dispatching job %s", nextJob.ID)
 				tasks := nextJob.Tasks
 				tm.Unlock()
 
@@ -359,9 +357,7 @@ func (tm *TaskManager) periodicWorkerScaling() {
 // - The average execution time and concurrency of tasks
 // - The number of tasks in the latest job related to available workers at the moment
 func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
-	// TODO: consider keeping logs in this function
-	// log.Debug().Msg("Scaling worker pool")
-	// log.Debug().Msgf("- Available/running workers: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
+	log.Debug().Msgf("Scaling workers, available/running: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
 	bufferFactor50 := 1.5
 	bufferFactor100 := 2.0
 
@@ -369,36 +365,25 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 	workersNeededParallelTasks := tm.metrics.maxJobWidth.Load()
 	// Apply the larger buffer factor for parallel tasks, as this is a low predictability metric
 	workersNeededParallelTasks = int32(math.Ceil(float64(workersNeededParallelTasks) * bufferFactor100))
-	//log.Debug().Msgf("- Job width worker need: %d", workersNeededParallelTasks)
 
 	// Calculate the number of workers needed based on the average execution time and tasks/s
 	avgExecTimeSeconds := tm.metrics.averageExecTime.Load().Seconds()
 	tasksPerSecond := float64(tm.metrics.tasksPerSecond.Load())
-	//log.Debug().Msgf("- Avg exec time: %v, tasks/s: %f", avgExecTimeSeconds, tasksPerSecond)
 	workersNeededConcurrently := int32(math.Ceil(avgExecTimeSeconds * tasksPerSecond))
 	// Apply the smaller buffer factor for concurrent tasks, as this is a more predictable metric
 	workersNeededConcurrently = int32(math.Ceil(float64(workersNeededConcurrently) * bufferFactor50))
-	//log.Debug().Msgf("- Concurrent worker need: %d", workersNeededConcurrently)
 
 	// Calculate the number of workers needed right now
 	var workersNeededImmediately int32
 	if tm.workerPool.availableWorkers() < int32(workersNeededNow) {
-		//log.Debug().Msgf("- Tasks in latest job: %d", workersNeededNow)
 		// If there are not enough workers to handle the incoming job, scale up immediately
 		extraWorkersNeeded := int32(workersNeededNow) - tm.workerPool.availableWorkers()
 		// Apply the smaller buffer factor for immediate tasks, as this is a more predictable metric
 		workersNeededImmediately = int32(math.Ceil(float64(tm.workerPool.runningWorkers()+extraWorkersNeeded) * bufferFactor50))
 	}
-	//log.Debug().Msgf("- Immediate worker need: %d", workersNeededImmediately)
 
 	// Use the highest of the three metrics
-	workersNeeded := workersNeededParallelTasks
-	if workersNeededConcurrently > workersNeeded {
-		workersNeeded = workersNeededConcurrently
-	}
-	if workersNeededImmediately > workersNeeded {
-		workersNeeded = workersNeededImmediately
-	}
+	workersNeeded := max(workersNeededParallelTasks, workersNeededConcurrently, workersNeededImmediately)
 	// Ensure the worker pool has at least the minimum number of workers
 	if workersNeeded < int32(tm.minWorkerCount) {
 		workersNeeded = int32(tm.minWorkerCount)
@@ -407,7 +392,7 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 	// Adjust the worker pool size
 	scalingRequestChan := tm.workerPool.workerCountScalingChannel()
 	scalingRequestChan <- workersNeeded
-	//log.Debug().Msgf("- Worker pool scaling request sent: %d", workersNeeded)
+	log.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
 }
 
 // validateJob validates a Job.

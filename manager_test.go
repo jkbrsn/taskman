@@ -446,18 +446,18 @@ func TestConcurrentScheduleTask(t *testing.T) {
 	numGoroutines := 20
 	numTasksPerGoroutine := 250
 
-	for i := 0; i < numGoroutines; i++ {
+	for id := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < numTasksPerGoroutine; j++ {
+			for j := range numTasksPerGoroutine {
 				taskID := fmt.Sprintf("task-%d-%d", id, j)
 				// Use a long cadence to avoid task execution before test ends, as this changes the queue length
 				task := MockTask{ID: taskID, cadence: 2 * time.Second}
 				_, err := manager.ScheduleTask(task, task.cadence)
 				assert.NoError(t, err, "Error adding task concurrently")
 			}
-		}(i)
+		}(id)
 	}
 
 	wg.Wait()
@@ -478,18 +478,18 @@ func TestConcurrentScheduleJob(t *testing.T) {
 	numGoroutines := 20
 	numTasksPerGoroutine := 250
 
-	for i := 0; i < numGoroutines; i++ {
+	for id := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < numTasksPerGoroutine; j++ {
+			for j := range numTasksPerGoroutine {
 				jobID := fmt.Sprintf("task-%d-%d", id, j)
 				// Use a long cadence to avoid job execution before test ends, as this changes the queue length
 				job := getMockedJob(1, jobID, 100*time.Millisecond, 2*time.Second)
 				err := manager.ScheduleJob(job)
 				assert.NoError(t, err, "Error adding job concurrently")
 			}
-		}(i)
+		}(id)
 	}
 
 	wg.Wait()
