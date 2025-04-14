@@ -3,7 +3,6 @@
 ## TODO v0.3.0
 
 - evaluate
-  - hardcoded values of taskman.New()
   - scaling system robustness and scaling speed
 - add an option to execute a job a select amount of times, e.g. a "one-hit" or "multi-hit" job, either with immediate or delayed execution
 - add an option to instantly execute a job in the queue, even though it has some time until next execution

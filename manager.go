@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -493,30 +494,26 @@ func newTaskManager(
 	return tm
 }
 
-// New creates, starts and returns a new TaskManager.
+// New creates, starts and returns a new TaskManager with default values.
 func New() *TaskManager {
 	channelBufferSize := 64
 	taskChan := make(chan Task, channelBufferSize)
 	errorChan := make(chan error, channelBufferSize)
 	execTimeChan := make(chan time.Duration, channelBufferSize)
-	minWorkerCount := 8
-	scaleInterval := 1 * time.Minute
+	initialWorkerCount := runtime.NumCPU()
+	autoScaleInterval := 1 * time.Minute
 	workerPoolDone := make(chan struct{})
 
-	tm := newTaskManager(taskChan, errorChan, execTimeChan, minWorkerCount, scaleInterval, workerPoolDone)
-
-	return tm
+	return newTaskManager(taskChan, errorChan, execTimeChan, initialWorkerCount, autoScaleInterval, workerPoolDone)
 }
 
-// newCustom creates, starts and returns a new TaskManager using custom values for some of
-// the task manager parameters.
-func newCustom(minWorkerCount, channelBufferSize int, scaleInterval time.Duration) *TaskManager {
+// NewCustom creates, starts and returns a new TaskManager using custom values for the task
+// manager parameters.
+func NewCustom(initialWorkerCount, channelBufferSize int, autoScaleInterval time.Duration) *TaskManager {
 	taskChan := make(chan Task, channelBufferSize)
 	errorChan := make(chan error, channelBufferSize)
 	execTimeChan := make(chan time.Duration, channelBufferSize)
 	workerPoolDone := make(chan struct{})
 
-	tm := newTaskManager(taskChan, errorChan, execTimeChan, minWorkerCount, scaleInterval, workerPoolDone)
-
-	return tm
+	return newTaskManager(taskChan, errorChan, execTimeChan, initialWorkerCount, autoScaleInterval, workerPoolDone)
 }
