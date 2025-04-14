@@ -3,6 +3,7 @@ package taskman
 import (
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -166,34 +167,49 @@ func (wp *workerPool) startWorker(id xid.ID) {
 			}
 			logger.Trace().Msgf("Worker %s executing task", id)
 
-			// Update worker state
-			worker.busy.Store(true)
-			wp.workersActive.Add(1)
+			func() {
+				// Update worker state: busy
+				worker.busy.Store(true)
+				wp.workersActive.Add(1)
 
-			// Execute the task
-			start := time.Now()
-			err := task.Execute()
-			if err != nil {
-				// No retry policy is implemented, we just log and send the error for now
-				select {
-				case wp.errorChan <- err:
-					// Error sent successfully
-				default:
-					// Error channel not ready to receive, do nothing
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error().Msgf("Worker %s: panic: %v\n%s", id, r, string(debug.Stack()))
+						err := fmt.Errorf("worker %s: panic: %v", id, r)
+						select {
+						case wp.errorChan <- err:
+							// Error sent
+						default:
+							// Error channel not ready to receive, do nothing
+						}
+					}
+
+					// Update worker state: dormant
+					worker.busy.Store(false)
+					wp.workersActive.Add(-1)
+					logger.Trace().Msgf("Worker %s: finished task", id)
+				}()
+
+				// Execute the task
+				start := time.Now()
+				err := task.Execute()
+				if err != nil {
+					// No retry policy is implemented, we just log and send the error for now
+					select {
+					case wp.errorChan <- err:
+						// Error sent
+					default:
+						// Error channel not ready to receive, do nothing
+					}
 				}
-			}
-			execTime := time.Since(start)
-			select {
-			case wp.execTimeChan <- execTime:
-				// Execution time sent successfully
-			default:
-				// Execution time channel not ready to receive, do nothing
-			}
-
-			// Update worker state
-			worker.busy.Store(false)
-			wp.workersActive.Add(-1)
-			logger.Trace().Msgf("Worker %s: finished task", id)
+				execTime := time.Since(start)
+				select {
+				case wp.execTimeChan <- execTime:
+					// Execution time sent
+				default:
+					// Execution time channel not ready to receive, do nothing
+				}
+			}()
 
 		case <-worker.stopChan:
 			logger.Debug().Msgf("Worker %s: received targeted stop signal, exiting", id)

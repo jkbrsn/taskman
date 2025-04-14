@@ -122,6 +122,46 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 	wg.Wait() // Don't exit the test until the error has been received
 }
 
+func TestWorkerPoolExecutionPanic(t *testing.T) {
+	errorChan := make(chan error, 1)
+	execTimeChan := make(chan time.Duration, 1)
+	taskChan := make(chan Task, 1)
+	workerPoolDone := make(chan struct{})
+	pool := newWorkerPool(1, errorChan, execTimeChan, taskChan, workerPoolDone)
+	defer pool.stop()
+
+	time.Sleep(5 * time.Millisecond) // Wait for worker to start
+
+	// Create a task which panics
+	panicTask := &MockTask{
+		executeFunc: func() error {
+			panic("test panic")
+		},
+		ID: "panic-task",
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// Listen to the error channel, confirm error is received
+	timeout := time.After(100 * time.Millisecond)
+	go func() {
+		defer wg.Done()
+		select {
+		case err := <-errorChan:
+			assert.Contains(t, err.Error(), "panic:")
+			assert.Contains(t, err.Error(), "test panic")
+		case <-timeout:
+			assert.Fail(t, "Test timed out waiting on error")
+		}
+
+	}()
+
+	// Send the panic-returning task to the worker
+	taskChan <- panicTask
+	wg.Wait() // Don't exit the test until the error has been received
+}
+
 func TestWorkerPoolBusyWorkers(t *testing.T) {
 	errorChan := make(chan error, 1)
 	execTimeChan := make(chan time.Duration, 1)
