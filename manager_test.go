@@ -747,10 +747,57 @@ func TestWorkerPoolScaling(t *testing.T) {
 		assert.Less(t, manager.workerPool.targetWorkerCount(), initialTargetWorkerCount, "Expected target worker count to be less than initial count")
 	})
 
+	t.Run("ScaleUpRespectsMaxWorkerCount", func(t *testing.T) {
+		// Create a job that would require more workers than maxWorkerCount
+		largeJob := Job{
+			ID:       "test-max-worker-scaling",
+			Cadence:  10 * time.Millisecond,
+			NextExec: time.Now().Add(20 * time.Millisecond),
+			Tasks:    make([]Task, maxWorkerCount+10), // More tasks than maxWorkerCount
+		}
+		for i := range largeJob.Tasks {
+			largeJob.Tasks[i] = MockTask{ID: fmt.Sprintf("task%d", i)}
+		}
+		err := manager.ScheduleJob(largeJob)
+		assert.NoError(t, err, "Expected no error scheduling job")
+
+		// Allow time for job to be scheduled and scaling to take place
+		time.Sleep(100 * time.Millisecond)
+
+		// Verify that the worker count is capped at maxWorkerCount
+		assert.Equal(t, int32(maxWorkerCount), manager.workerPool.targetWorkerCount(),
+			"Expected target worker count to be capped at maxWorkerCount")
+		assert.Equal(t, int32(maxWorkerCount), manager.workerPool.runningWorkers(),
+			"Expected running worker count to be capped at maxWorkerCount")
+
+		// Try to scale up further with another large job
+		largeJob2 := Job{
+			ID:       "test-max-worker-scaling-2",
+			Cadence:  10 * time.Millisecond,
+			NextExec: time.Now().Add(20 * time.Millisecond),
+			Tasks:    make([]Task, maxWorkerCount+10),
+		}
+		err = manager.ScheduleJob(largeJob2)
+		assert.NoError(t, err, "Expected no error scheduling job")
+
+		// Allow time for scaling to take place
+		time.Sleep(20 * time.Millisecond)
+
+		// Verify that the worker count is still capped at maxWorkerCount
+		assert.Equal(t, int32(maxWorkerCount), manager.workerPool.targetWorkerCount(),
+			"Expected target worker count to remain capped at maxWorkerCount")
+		assert.Equal(t, int32(maxWorkerCount), manager.workerPool.runningWorkers(),
+			"Expected running worker count to remain capped at maxWorkerCount")
+	})
+
 	t.Run("RemoveAllJobs", func(t *testing.T) {
 		err := manager.RemoveJob("test-immediate-need-scaling")
 		assert.NoError(t, err, "Expected no error removing job")
-		time.Sleep(5 * time.Millisecond) // Allow time for job to be removed
+		err = manager.RemoveJob("test-max-worker-scaling")
+		assert.NoError(t, err, "Expected no error removing job")
+		err = manager.RemoveJob("test-max-worker-scaling-2")
+		assert.NoError(t, err, "Expected no error removing job")
+		time.Sleep(75 * time.Millisecond) // Allow time for jobs to be removed
 
 		// Check that the worker pool has scaled down
 		assert.Equal(t, int32(manager.minWorkerCount), manager.workerPool.targetWorkerCount(), "Expected target worker count to be %d after removing all jobs", manager.minWorkerCount)
