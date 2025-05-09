@@ -93,6 +93,30 @@ func (tm *TaskManager) ErrorChannel() <-chan error {
 	return tm.errorChan
 }
 
+// Metrics returns a snapshot of the task manager's metrics.
+func (tm *TaskManager) Metrics() TaskManagerMetrics {
+	tm.RLock()
+	defer tm.RUnlock()
+
+	jobsInQueue := tm.jobQueue.Len()
+
+	metrics := TaskManagerMetrics{
+		AverageExecTime:     tm.metrics.averageExecTime.Load(),
+		TotalTaskExecutions: int(tm.metrics.totalTaskExecutions.Load()),
+		TasksPerSecond:      tm.metrics.tasksPerSecond.Load(),
+		QueuedJobs:          jobsInQueue,
+		QueuedTasks:         int(tm.metrics.tasksInQueue.Load()),
+		MaxJobWidth:         tm.metrics.maxJobWidth.Load(),
+		WorkersActive:       int(tm.workerPool.workersActive.Load()),
+		WorkersRunning:      int(tm.workerPool.workersRunning.Load()),
+		WorkerCountTarget:   int(tm.workerPool.workerCountTarget.Load()),
+		WorkerUtilization:   float32(tm.workerPool.utilization()),
+		WorkerScalingEvents: int(tm.workerPool.workerScalingEvents.Load()),
+	}
+
+	return metrics
+}
+
 // ScheduleFunc takes a function and adds it to the TaskManager in a Job. Creates and returns a
 // randomized ID, used to identify the Job within the task manager.
 func (tm *TaskManager) ScheduleFunc(function func() error, cadence time.Duration) (string, error) {

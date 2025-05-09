@@ -8,8 +8,40 @@ import (
 	uatomic "go.uber.org/atomic"
 )
 
-// managerMetrics stores metrics about the task manager.
+// TaskManagerMetrics stores metrics about the task manager.
+type TaskManagerMetrics struct {
+	// Job queue
+	QueuedJobs  int   // Total number of jobs in the queue
+	QueuedTasks int   // Total number of tasks in the queue
+	MaxJobWidth int32 // Widest job in the queue in terms of number of tasks
+
+	// Task execution
+	AverageExecTime     time.Duration // Average execution time of tasks
+	TotalTaskExecutions int           // Total number of tasks executed
+	TasksPerSecond      float32       // Number of tasks executed per second
+
+	// Worker pool
+	WorkersActive       int     // Number of active workers
+	WorkersRunning      int     // Number of running workers
+	WorkerCountTarget   int     // Target number of workers
+	WorkerUtilization   float32 // Utilization of workers
+	WorkerScalingEvents int     // Number of worker scaling events since start
+
+	// TODO: consider adding:
+	// JobSuccessRate
+	// JobLatency
+	// JobBacklog
+	// TaskSuccessRate
+	// TaskLatency
+	// TaskQueueWait
+	// TaskBacklogLength
+	// WorkerAverageLifetime
+
+}
+
+// managerMetrics stores internal metrics about the task manager.
 type managerMetrics struct {
+	// Task execution
 	averageExecTime     uatomic.Duration // Average execution time of tasks
 	totalTaskExecutions atomic.Int64     // Total number of tasks executed
 	tasksPerSecond      uatomic.Float32  // Number of tasks executed per second

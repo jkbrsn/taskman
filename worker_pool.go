@@ -25,6 +25,8 @@ type workerPool struct {
 	stopPoolChan    chan struct{}      // Channel to signal stopping the worker pool
 	workerPoolDone  chan struct{}      // Channel to signal worker pool is done
 
+	workerScalingEvents atomic.Int64 // Number of worker scaling events since start
+
 	mu sync.Mutex
 	wg sync.WaitGroup
 }
@@ -67,6 +69,7 @@ func (wp *workerPool) addWorkers(nWorkers int) {
 
 // adjustWorkerCount adjusts the number of workers in the pool to match the target worker count.
 func (pool *workerPool) adjustWorkerCount(newTargetCount int32) {
+	pool.workerScalingEvents.Add(1)
 	// TODO: also consider making it return an error
 	currentTarget := pool.targetWorkerCount()
 

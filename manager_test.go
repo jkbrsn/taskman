@@ -615,33 +615,59 @@ Loop:
 	assert.Contains(t, receivedErrors, "error 2")
 }
 
-func TestTaskExecutionMetrics(t *testing.T) {
-	manager := NewCustom(2, 2, 1*time.Minute)
+func TestManagerMetrics(t *testing.T) {
+	workerCount := 2
+	manager := NewCustom(workerCount, 2, 1*time.Minute)
 	defer manager.Stop()
 
-	// Schedule a job with a task that takes 20ms to execute
-	var wg sync.WaitGroup
-	wg.Add(1)
 	executionTime := 25 * time.Millisecond
-	job := Job{
-		ID:       "test-execution-task",
-		Cadence:  1 * time.Second,                       // Set a long cadence to avoid more than 1 execution
-		NextExec: time.Now().Add(25 * time.Millisecond), // TODO: Fix this hack when instant exec is implemented
-		Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
-			time.Sleep(executionTime)
-			wg.Done()
-			return nil
-		}}},
-	}
-	manager.ScheduleJob(job)
 
-	// Wait for the task to execute and the metrics to be updated
-	wg.Wait()
-	time.Sleep(10 * time.Millisecond) // Allow time for metrics to be updated
+	t.Run("Task execution", func(t *testing.T) {
+		// Schedule a job with a task that takes 20ms to execute
+		var wg sync.WaitGroup
+		wg.Add(1)
+		job := Job{
+			ID:       "test-execution-task",
+			Cadence:  1 * time.Second, // Set a long cadence to avoid more than 1 execution
+			NextExec: time.Now(),
+			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+				time.Sleep(executionTime)
+				wg.Done()
+				return nil
+			}}},
+		}
+		manager.ScheduleJob(job)
 
-	// Verify the metrics
-	assert.Equal(t, int64(1), manager.metrics.totalTaskExecutions.Load(), "Expected 1 total task to have been counted")
-	assert.GreaterOrEqual(t, manager.metrics.averageExecTime.Load(), executionTime, "Expected task execution time to be at least 10ms")
+		// Wait for the task to execute and the metrics to be updated
+		wg.Wait()
+		time.Sleep(10 * time.Millisecond) // Allow time for metrics to be updated
+
+		// Verify the metrics
+		assert.Equal(t, int64(1), manager.metrics.totalTaskExecutions.Load(), "Expected 1 total task to have been counted")
+		assert.GreaterOrEqual(t, manager.metrics.averageExecTime.Load(), executionTime, "Expected task execution time to be at least 10ms")
+	})
+
+	t.Run("Get Metrics", func(t *testing.T) {
+		metrics := manager.Metrics()
+
+		// Verify task execution metrics
+		assert.Equal(t, 1, metrics.TotalTaskExecutions, "Expected 1 total task to have been counted")
+		assert.GreaterOrEqual(t, metrics.AverageExecTime, executionTime, "Expected task execution time to be at least %v", executionTime)
+		assert.Greater(t, metrics.TasksPerSecond, float32(0), "Expected tasks per second to be greater than 0")
+
+		// Verify worker pool metrics
+		assert.Equal(t, 0, metrics.WorkersActive, "Expected 2 active workers")
+		assert.Equal(t, workerCount, metrics.WorkersRunning, "Expected 2 running workers")
+		assert.Equal(t, workerCount, metrics.WorkerCountTarget, "Expected worker count target to be 2")
+		assert.GreaterOrEqual(t, metrics.WorkerUtilization, float32(0), "Expected worker utilization to be >= 0")
+		assert.LessOrEqual(t, metrics.WorkerUtilization, float32(1), "Expected worker utilization to be <= 1")
+		assert.Greater(t, metrics.WorkerScalingEvents, 0, "Expected at least 1 worker scaling event")
+
+		// Verify job queue metrics
+		assert.Equal(t, 1, metrics.QueuedJobs, "Expected 1 job in queue")
+		assert.Equal(t, 1, metrics.QueuedTasks, "Expected 1 task in queue")
+		assert.Equal(t, int32(1), metrics.MaxJobWidth, "Expected max job width to be 1 task")
+	})
 }
 
 func TestWorkerPoolScaling(t *testing.T) {
