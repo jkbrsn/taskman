@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -922,4 +923,49 @@ func TestTaskExecutionAt(t *testing.T) {
 		elapsed := execTime.Sub(start)
 		assert.GreaterOrEqual(t, elapsed, execDelay, "Task executed after %v, expected around 25ms", elapsed)
 	})
+}
+
+func TestGoroutineLeak(t *testing.T) {
+	// Get initial goroutine count
+	initialGoroutines := runtime.NumGoroutine()
+
+	// Create a manager with periodic scaling
+	manager := NewCustom(1, 4, 10*time.Millisecond)
+	defer manager.Stop()
+
+	// Schedule a job that runs for a while
+	job := Job{
+		ID:       "test-job",
+		Cadence:  5 * time.Millisecond,
+		NextExec: time.Now().Add(5 * time.Millisecond),
+		Tasks: []Task{
+			MockTask{
+				ID: "test-task",
+				executeFunc: func() error {
+					time.Sleep(5 * time.Millisecond)
+					return nil
+				},
+			},
+		},
+	}
+
+	// Schedule the job
+	err := manager.ScheduleJob(job)
+	assert.NoError(t, err, "Expected no error scheduling job")
+
+	// Run for a while to ensure periodic scaling and job execution occur
+	time.Sleep(50 * time.Millisecond)
+
+	// Stop the manager
+	manager.Stop()
+
+	// Wait for all goroutines to complete
+	time.Sleep(25 * time.Millisecond)
+
+	// Verify goroutine count is back to initial level
+	finalGoroutines := runtime.NumGoroutine()
+	// Allow for a small delta since other goroutines in the system may have started
+	assert.InDelta(t, initialGoroutines, finalGoroutines, 5,
+		"Expected goroutine count to return to initial level, got %d (initial: %d)",
+		finalGoroutines, initialGoroutines)
 }
