@@ -471,10 +471,8 @@ func newTaskManager(
 	metrics := &managerMetrics{
 		done: workerPoolDone,
 	}
-	go metrics.consumeExecTime(execTimeChan)
 
 	// Create the worker pool
-	workerPool := newWorkerPool(minWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	tm := &TaskManager{
@@ -482,18 +480,19 @@ func newTaskManager(
 		cancel:         cancel,
 		metrics:        metrics,
 		jobQueue:       make(priorityQueue, 0),
-		newJobChan:     make(chan bool, 1),
+		newJobChan:     make(chan bool, 2),
 		errorChan:      errorChan,
 		runDone:        make(chan struct{}),
 		taskChan:       taskChan,
-		workerPool:     workerPool,
 		workerPoolDone: workerPoolDone,
 		minWorkerCount: minWorkerCount,
 		scaleInterval:  scaleInterval,
 	}
+	tm.workerPool = newWorkerPool(minWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
 
 	heap.Init(&tm.jobQueue)
 
+	go metrics.consumeExecTime(execTimeChan)
 	go tm.run()
 	go tm.periodicWorkerScaling()
 
