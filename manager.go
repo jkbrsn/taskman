@@ -15,6 +15,12 @@ import (
 	"github.com/rs/zerolog"
 )
 
+const (
+	maxWorkerCount       = 4096
+	defaultScaleInterval = 1 * time.Minute
+	defaultBufferedSize  = 64
+)
+
 var (
 	// Package-level logger that defaults to a no-op logger
 	logger = zerolog.New(zerolog.NewTestWriter(nil)).Level(zerolog.Disabled)
@@ -402,9 +408,9 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 	// Use the highest of the three metrics
 	workersNeeded := max(workersNeededParallelTasks, workersNeededConcurrently, workersNeededImmediately)
 	// Ensure the worker pool has at least the minimum number of workers
-	if workersNeeded < int32(tm.minWorkerCount) {
-		workersNeeded = int32(tm.minWorkerCount)
-	}
+	workersNeeded = max(workersNeeded, int32(tm.minWorkerCount))
+	// Ensure the worker pool has at most the maximum number of workers
+	workersNeeded = min(workersNeeded, int32(maxWorkerCount))
 
 	// Adjust the worker pool size
 	scalingRequestChan := tm.workerPool.workerCountScalingChannel()
@@ -496,12 +502,11 @@ func newTaskManager(
 
 // New creates, starts and returns a new TaskManager with default values.
 func New() *TaskManager {
-	channelBufferSize := 64
-	taskChan := make(chan Task, channelBufferSize)
-	errorChan := make(chan error, channelBufferSize)
-	execTimeChan := make(chan time.Duration, channelBufferSize)
+	taskChan := make(chan Task, defaultBufferedSize)
+	errorChan := make(chan error, defaultBufferedSize)
+	execTimeChan := make(chan time.Duration, defaultBufferedSize)
 	initialWorkerCount := runtime.NumCPU()
-	autoScaleInterval := 1 * time.Minute
+	autoScaleInterval := defaultScaleInterval
 	workerPoolDone := make(chan struct{})
 
 	return newTaskManager(taskChan, errorChan, execTimeChan, initialWorkerCount, autoScaleInterval, workerPoolDone)
