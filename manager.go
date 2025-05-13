@@ -101,17 +101,17 @@ func (tm *TaskManager) Metrics() TaskManagerMetrics {
 	jobsInQueue := tm.jobQueue.Len()
 
 	metrics := TaskManagerMetrics{
-		AverageExecTime:     tm.metrics.averageExecTime.Load(),
-		TotalTaskExecutions: int(tm.metrics.totalTaskExecutions.Load()),
-		TasksPerSecond:      tm.metrics.tasksPerSecond.Load(),
-		QueuedJobs:          jobsInQueue,
-		QueuedTasks:         int(tm.metrics.tasksInQueue.Load()),
-		MaxJobWidth:         tm.metrics.maxJobWidth.Load(),
-		WorkersActive:       int(tm.workerPool.workersActive.Load()),
-		WorkersRunning:      int(tm.workerPool.workersRunning.Load()),
-		WorkerCountTarget:   int(tm.workerPool.workerCountTarget.Load()),
-		WorkerUtilization:   float32(tm.workerPool.utilization()),
-		WorkerScalingEvents: int(tm.workerPool.workerScalingEvents.Load()),
+		QueuedJobs:           jobsInQueue,
+		QueuedTasks:          int(tm.metrics.tasksInQueue.Load()),
+		QueueMaxJobWidth:     int(tm.metrics.maxJobWidth.Load()),
+		TaskAverageExecTime:  tm.metrics.averageExecTime.Load(),
+		TasksTotalExecutions: int(tm.metrics.totalTaskExecutions.Load()),
+		TasksPerSecond:       tm.metrics.tasksPerSecond.Load(),
+		WorkerCountTarget:    int(tm.workerPool.workerCountTarget.Load()),
+		WorkerScalingEvents:  int(tm.workerPool.workerScalingEvents.Load()),
+		WorkerUtilization:    float32(tm.workerPool.utilization()),
+		WorkersActive:        int(tm.workerPool.workersActive.Load()),
+		WorkersRunning:       int(tm.workerPool.workersRunning.Load()),
 	}
 
 	return metrics

@@ -651,8 +651,8 @@ func TestManagerMetrics(t *testing.T) {
 		metrics := manager.Metrics()
 
 		// Verify task execution metrics
-		assert.Equal(t, 1, metrics.TotalTaskExecutions, "Expected 1 total task to have been counted")
-		assert.GreaterOrEqual(t, metrics.AverageExecTime, executionTime, "Expected task execution time to be at least %v", executionTime)
+		assert.Equal(t, 1, metrics.TasksTotalExecutions, "Expected 1 total task to have been counted")
+		assert.GreaterOrEqual(t, metrics.TaskAverageExecTime, executionTime, "Expected task execution time to be at least %v", executionTime)
 		assert.Greater(t, metrics.TasksPerSecond, float32(0), "Expected tasks per second to be greater than 0")
 
 		// Verify worker pool metrics
@@ -666,7 +666,7 @@ func TestManagerMetrics(t *testing.T) {
 		// Verify job queue metrics
 		assert.Equal(t, 1, metrics.QueuedJobs, "Expected 1 job in queue")
 		assert.Equal(t, 1, metrics.QueuedTasks, "Expected 1 task in queue")
-		assert.Equal(t, int32(1), metrics.MaxJobWidth, "Expected max job width to be 1 task")
+		assert.Equal(t, 1, metrics.QueueMaxJobWidth, "Expected max job width to be 1 task")
 	})
 }
 

@@ -11,21 +11,21 @@ import (
 // TaskManagerMetrics stores metrics about the task manager.
 type TaskManagerMetrics struct {
 	// Job queue
-	QueuedJobs  int   // Total number of jobs in the queue
-	QueuedTasks int   // Total number of tasks in the queue
-	MaxJobWidth int32 // Widest job in the queue in terms of number of tasks
+	QueueMaxJobWidth int // Widest job in the queue in terms of number of tasks
+	QueuedJobs       int // Total number of jobs in the queue
+	QueuedTasks      int // Total number of tasks in the queue
 
 	// Task execution
-	AverageExecTime     time.Duration // Average execution time of tasks
-	TotalTaskExecutions int           // Total number of tasks executed
-	TasksPerSecond      float32       // Number of tasks executed per second
+	TaskAverageExecTime  time.Duration // Average execution time of tasks
+	TasksTotalExecutions int           // Total number of tasks executed
+	TasksPerSecond       float32       // Number of tasks executed per second
 
 	// Worker pool
+	WorkerCountTarget   int     // Target number of workers
+	WorkerScalingEvents int     // Number of worker scaling events since start
+	WorkerUtilization   float32 // Utilization of workers
 	WorkersActive       int     // Number of active workers
 	WorkersRunning      int     // Number of running workers
-	WorkerCountTarget   int     // Target number of workers
-	WorkerUtilization   float32 // Utilization of workers
-	WorkerScalingEvents int     // Number of worker scaling events since start
 
 	// TODO: consider adding:
 	// JobSuccessRate
@@ -36,7 +36,6 @@ type TaskManagerMetrics struct {
 	// TaskQueueWait
 	// TaskBacklogLength
 	// WorkerAverageLifetime
-
 }
 
 // managerMetrics stores internal metrics about the task manager.
