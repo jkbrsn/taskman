@@ -295,9 +295,9 @@ func (wp *workerPool) stopWorkers(workersToStop int) error {
 	}
 
 	// Then stop busy workers as well, up to the number of workers to remove
-	workersToStop -= len(idleWorkers)
-	busyWorkers = busyWorkers[:workersToStop]
-	for _, workerID := range busyWorkers {
+	remainingToStop := min(workersToStop-len(idleWorkers), len(busyWorkers))
+	workersToRemove := busyWorkers[:remainingToStop]
+	for _, workerID := range workersToRemove {
 		err := wp.stopWorker(workerID)
 		if err != nil {
 			errs = errors.Join(errs, err)
