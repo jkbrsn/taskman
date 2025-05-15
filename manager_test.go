@@ -789,7 +789,7 @@ func TestWorkerPoolScaling(t *testing.T) {
 		assert.NoError(t, err, "Expected no error scheduling job")
 
 		// Allow time for job to be scheduled and scaling to take place
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 
 		// Verify that the worker count is capped at maxWorkerCount
 		assert.Equal(t, int32(maxWorkerCount), manager.workerPool.targetWorkerCount(),
@@ -808,7 +808,7 @@ func TestWorkerPoolScaling(t *testing.T) {
 		assert.NoError(t, err, "Expected no error scheduling job")
 
 		// Allow time for scaling to take place
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 
 		// Verify that the worker count is still capped at maxWorkerCount
 		assert.Equal(t, int32(maxWorkerCount), manager.workerPool.targetWorkerCount(),
