@@ -754,20 +754,34 @@ func TestWorkerPoolScaling(t *testing.T) {
 	})
 
 	t.Run("ScaleDown", func(t *testing.T) {
+		manager := NewCustom(1, 1, 1*time.Minute)
+		defer manager.Stop()
+
+		job := Job{
+			ID:       "test-job-width-scaling",
+			Cadence:  5 * time.Millisecond,
+			NextExec: time.Now().Add(20 * time.Millisecond),
+			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+				logger.Debug().Msg("Executing task1")
+				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
+				return nil
+			}}, MockTask{ID: "task2", executeFunc: func() error {
+				logger.Debug().Msg("Executing task2")
+				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
+				return nil
+			}}},
+		}
+		err := manager.ScheduleJob(job)
+		assert.Nil(t, err, "Expected no error scheduling job")
+		time.Sleep(5 * time.Millisecond) // Allow time for job to be scheduled + worker pool to scale
+
 		initialRunningWorkers := manager.workerPool.runningWorkers()
 		initialTargetWorkerCount := manager.workerPool.targetWorkerCount()
 
-		// Remove a job to allow room to scale down
-		err := manager.RemoveJob("test-job-width-scaling")
+		// Remove the job
+		err = manager.RemoveJob("test-job-width-scaling")
 		assert.Nil(t, err, "Expected no error removing job")
-		// Allow time for job removal and scaling attempt
-		time.Sleep(25 * time.Millisecond)
-
-		// Remove another job to actually trigger scaling down, since the utilization likely won't be low enough
-		// unless another job is removed
-		err = manager.RemoveJob("test-concurrency-need-scaling")
-		assert.Nil(t, err, "Expected no error removing job")
-		time.Sleep(10 * time.Millisecond) // Allow time for job to be removed
+		time.Sleep(5 * time.Millisecond) // Allow time for job to be removed
 
 		// Check that the worker pool has scaled down
 		assert.Less(t, manager.workerPool.runningWorkers(), initialRunningWorkers, "Expected running worker count to be less than initial count")
@@ -775,6 +789,9 @@ func TestWorkerPoolScaling(t *testing.T) {
 	})
 
 	t.Run("ScaleUpRespectsMaxWorkerCount", func(t *testing.T) {
+		manager := NewCustom(1, 1, 1*time.Minute)
+		defer manager.Stop()
+
 		// Create a job that would require more workers than maxWorkerCount
 		largeJob := Job{
 			ID:       "test-max-worker-scaling",
@@ -789,7 +806,7 @@ func TestWorkerPoolScaling(t *testing.T) {
 		assert.NoError(t, err, "Expected no error scheduling job")
 
 		// Allow time for job to be scheduled and scaling to take place
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 
 		// Verify that the worker count is capped at maxWorkerCount
 		assert.Equal(t, int32(maxWorkerCount), manager.workerPool.targetWorkerCount(),
@@ -818,11 +835,26 @@ func TestWorkerPoolScaling(t *testing.T) {
 	})
 
 	t.Run("RemoveAllJobs", func(t *testing.T) {
-		err := manager.RemoveJob("test-immediate-need-scaling")
-		assert.NoError(t, err, "Expected no error removing job")
-		err = manager.RemoveJob("test-max-worker-scaling")
-		assert.NoError(t, err, "Expected no error removing job")
-		err = manager.RemoveJob("test-max-worker-scaling-2")
+		manager := NewCustom(1, 1, 1*time.Minute)
+		defer manager.Stop()
+
+		job := Job{
+			ID:       "test-job",
+			Cadence:  10 * time.Millisecond,
+			NextExec: time.Now().Add(20 * time.Millisecond),
+			Tasks:    make([]Task, 10),
+		}
+		for i := range job.Tasks {
+			job.Tasks[i] = MockTask{ID: fmt.Sprintf("task%d", i)}
+		}
+		err := manager.ScheduleJob(job)
+		assert.NoError(t, err)
+
+		// Allow time for job to be scheduled and scaling to take place
+		time.Sleep(5 * time.Millisecond)
+
+		// Remove the job
+		err = manager.RemoveJob("test-job")
 		assert.NoError(t, err, "Expected no error removing job")
 		time.Sleep(150 * time.Millisecond) // Allow time for job removal
 

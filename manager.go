@@ -437,8 +437,7 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 	workersNeeded = min(workersNeeded, int32(maxWorkerCount))
 
 	// Adjust the worker pool size
-	scalingRequestChan := tm.workerPool.workerCountScalingChannel()
-	scalingRequestChan <- workersNeeded
+	tm.workerPool.enqueueWorkerScaling(workersNeeded)
 	logger.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
 }
 

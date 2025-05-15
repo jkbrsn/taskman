@@ -11,6 +11,13 @@ import (
 	"github.com/rs/xid"
 )
 
+const (
+	// If the worker pool utilization is above this threshold, we will not scale down
+	utilizationThreshold = 0.4
+	// Minimum interval between downscaling events
+	downScaleMinInterval = time.Second * 30
+)
+
 // workerPool manages a pool of workers that execute tasks.
 type workerPool struct {
 	workers           sync.Map     // Map worker ID (xid.ID) to worker (workerInfo)
@@ -26,6 +33,7 @@ type workerPool struct {
 	workerPoolDone  chan struct{}      // Channel to signal worker pool is done
 
 	workerScalingEvents atomic.Int64 // Number of worker scaling events since start
+	lastDownScale       time.Time    // Last time a downscaling event occurred
 
 	mu sync.Mutex
 	wg sync.WaitGroup
@@ -72,33 +80,35 @@ func (wp *workerPool) addWorkers(nWorkers int) {
 // adjustWorkerCount adjusts the number of workers in the pool to match the target worker count.
 func (pool *workerPool) adjustWorkerCount(newTargetCount int32) {
 	pool.workerScalingEvents.Add(1)
-	// TODO: also consider making it return an error
 	currentTarget := pool.targetWorkerCount()
 
-	// Add or remove workers as needed
-	if newTargetCount > currentTarget {
-		logger.Debug().Msgf("Scaling worker pool UP from %d to %d workers", currentTarget, newTargetCount)
+	// Update desired target count
+	pool.workerCountTarget.Store(newTargetCount)
+
+	switch {
+	case newTargetCount > currentTarget:
 		// Scale up
+		logger.Debug().Msgf("Scaling worker count UP from %d to %d", currentTarget, newTargetCount)
 		pool.addWorkers(int(newTargetCount - currentTarget))
-	} else if newTargetCount < currentTarget {
-		// Scale down cautiously
-		utilizationThreshold := 0.4 // If above 40% utilization, do not scale down
-		if pool.utilization() < utilizationThreshold {
-			logger.Debug().Msgf("Scaling worker pool DOWN from %d to %d workers", currentTarget, newTargetCount)
-			err := pool.stopWorkers(int(currentTarget - newTargetCount))
-			if err != nil {
-				logger.Warn().Err(err).Caller().Msg("Failed to stop workers when scaling down")
+
+	case newTargetCount < currentTarget:
+		// Scale down based on utilization and debounce
+		if pool.utilization() < utilizationThreshold && time.Since(pool.lastDownScale) >= downScaleMinInterval {
+			logger.Debug().Msgf("Scaling worker count DOWN from %d to %d", currentTarget, newTargetCount)
+			if err := pool.stopWorkers(int(currentTarget - newTargetCount)); err != nil {
+				logger.Warn().Err(err).Msg("stopWorkers failed")
+			} else {
+				pool.lastDownScale = time.Now()
 			}
 		} else {
-			logger.Debug().Msgf("Utilization %.2f is above threshold %.2f, not scaling down", pool.utilization(), utilizationThreshold)
-			return // Return early to avoid setting the target worker count
+			logger.Debug().
+				Msgf("Skipping down-scale: util=%.2f, sinceLast=%s",
+					pool.utilization(), time.Since(pool.lastDownScale))
 		}
-	} else {
-		logger.Debug().Msgf("Worker pool already at target worker count %d", newTargetCount)
-	}
 
-	// Update the target worker count
-	pool.workerCountTarget.Store(newTargetCount)
+	default:
+		logger.Debug().Msgf("Pool already at target worker count %d", newTargetCount)
+	}
 }
 
 // busyStateWorkers returns two slices of worker IDs:
@@ -126,6 +136,28 @@ func (wp *workerPool) busyWorkers() []xid.ID {
 	return busyWorkers
 }
 
+// enqueueWorkerScaling enqueues a worker count scaling request.
+func (p *workerPool) enqueueWorkerScaling(target int32) {
+	select {
+	case <-p.stopPoolChan:
+		// Worker pool is shutting down, exit
+		return
+	default:
+	}
+
+	// Drain any stale target so the buffer never blocks
+	select {
+	case <-p.workerCountChan:
+	default:
+	}
+
+	// Attempt to send, but abort if stopPoolChan closes
+	select {
+	case p.workerCountChan <- target:
+	case <-p.stopPoolChan:
+	}
+}
+
 // idleWorkers returns a slice of currently idle workers.
 func (wp *workerPool) idleWorkers() []xid.ID {
 	_, idleWorkers := wp.busyAndIdleWorkers()
@@ -139,8 +171,10 @@ func (wp *workerPool) processWorkerCountScaling() {
 		case <-wp.stopPoolChan:
 			// Worker count scaling received stop signal, exiting
 			return
-		case requestWorkerCount := <-wp.workerCountChan:
-			wp.adjustWorkerCount(requestWorkerCount)
+		case newTargetCount := <-wp.workerCountChan:
+			wp.mu.Lock()
+			wp.adjustWorkerCount(newTargetCount)
+			wp.mu.Unlock()
 		}
 	}
 }
@@ -231,8 +265,10 @@ func (wp *workerPool) startWorker(id xid.ID) {
 func (wp *workerPool) stop() {
 	// Signal workers to stop
 	close(wp.stopPoolChan)
+
 	// Wait for all workers to finish
 	wp.wg.Wait()
+
 	// Signal worker pool is done
 	close(wp.workerPoolDone)
 }
@@ -262,10 +298,8 @@ func (wp *workerPool) stopWorker(id xid.ID) error {
 // Note 2: due to the timing of the stop signal, there is a chance that a worker marked as idle
 // will pick up a task before the stop signal is received, in which case the worker will not stop
 // until it finishes the task. This will not block this function.
+// Note 3: this function is not thread-safe, it should be called from within a mutex lock.
 func (wp *workerPool) stopWorkers(workersToStop int) error {
-	wp.mu.Lock() // Lock to prevent race conditions while modifying worker state
-	defer wp.mu.Unlock()
-
 	// Validate number of workers to remove
 	if workersToStop <= 0 {
 		return fmt.Errorf("invalid number of workers to remove: %d", workersToStop)
@@ -329,7 +363,7 @@ func (wp *workerPool) workerCountScalingChannel() chan<- int32 {
 
 // newWorkerPool creates and returns a new worker pool.
 func newWorkerPool(
-	initialWorkers int,
+	initialWorkerCount int,
 	errorChan chan error,
 	execTimeChan chan time.Duration,
 	taskChan chan Task,
@@ -340,11 +374,11 @@ func newWorkerPool(
 		execTimeChan:    execTimeChan,
 		stopPoolChan:    make(chan struct{}),
 		taskChan:        taskChan,
-		workerCountChan: make(chan int32),
+		workerCountChan: make(chan int32, 1), // Buffered channel to prevent blocking
 		workerPoolDone:  workerPoolDone,
 	}
-	pool.addWorkers(initialWorkers)
-	pool.workerCountTarget.Store(int32(initialWorkers))
+	pool.addWorkers(initialWorkerCount)
+	pool.workerCountTarget.Store(int32(initialWorkerCount))
 
 	go pool.processWorkerCountScaling()
 
