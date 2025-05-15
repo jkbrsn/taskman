@@ -33,9 +33,11 @@ type workerPool struct {
 
 // worker represents a worker that executes tasks.
 type workerInfo struct {
-	id       xid.ID        // The worker ID
-	busy     atomic.Bool   // True if worker is busy
+	id   xid.ID      // The worker ID
+	busy atomic.Bool // True if worker is busy
+
 	stopChan chan struct{} // Channel to signal stopping the worker
+	stopOnce sync.Once     // Once to ensure stop signal is sent only once
 }
 
 // activeWorkers returns the number of active workers.
@@ -242,11 +244,15 @@ func (wp *workerPool) stopWorker(id xid.ID) error {
 	if !ok {
 		return fmt.Errorf("worker %s not found", id)
 	}
+
 	workerInfo, ok := value.(*workerInfo)
 	if !ok {
 		return fmt.Errorf("worker %s has invalid type", id)
 	}
-	close(workerInfo.stopChan)
+
+	workerInfo.stopOnce.Do(func() {
+		close(workerInfo.stopChan)
+	})
 	return nil
 }
 

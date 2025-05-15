@@ -824,7 +824,7 @@ func TestWorkerPoolScaling(t *testing.T) {
 		assert.NoError(t, err, "Expected no error removing job")
 		err = manager.RemoveJob("test-max-worker-scaling-2")
 		assert.NoError(t, err, "Expected no error removing job")
-		time.Sleep(75 * time.Millisecond) // Allow time for jobs to be removed
+		time.Sleep(150 * time.Millisecond) // Allow time for job removal
 
 		// Check that the worker pool has scaled down
 		assert.Equal(t, int32(manager.minWorkerCount), manager.workerPool.targetWorkerCount(), "Expected target worker count to be %d after removing all jobs", manager.minWorkerCount)
