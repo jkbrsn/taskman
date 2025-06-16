@@ -1,6 +1,6 @@
 module github.com/jkbrsn/go-taskman
 
-go 1.24.1
+go 1.24.3
 
 require (
 	github.com/rs/xid v1.6.0
