@@ -80,7 +80,7 @@ func getMockedJob(nTasks int, jobID string, cadence, timeToNextExec time.Duratio
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
 	setLoggerLevel(testLogLevel)
-	os.Exit(m.Run())
+	m.Run()
 }
 
 func TestNewTaskManagerCustom(t *testing.T) {
