@@ -78,32 +78,32 @@ func (wp *workerPool) addWorkers(nWorkers int) {
 }
 
 // adjustWorkerCount adjusts the number of workers in the pool to match the target worker count.
-func (pool *workerPool) adjustWorkerCount(newTargetCount int32) {
-	pool.workerScalingEvents.Add(1)
-	currentTarget := pool.targetWorkerCount()
+func (wp *workerPool) adjustWorkerCount(newTargetCount int32) {
+	wp.workerScalingEvents.Add(1)
+	currentTarget := wp.targetWorkerCount()
 
 	// Update desired target count
-	pool.workerCountTarget.Store(newTargetCount)
+	wp.workerCountTarget.Store(newTargetCount)
 
 	switch {
 	case newTargetCount > currentTarget:
 		// Scale up
 		logger.Debug().Msgf("Scaling worker count UP from %d to %d", currentTarget, newTargetCount)
-		pool.addWorkers(int(newTargetCount - currentTarget))
+		wp.addWorkers(int(newTargetCount - currentTarget))
 
 	case newTargetCount < currentTarget:
 		// Scale down based on utilization and debounce
-		if pool.utilization() < utilizationThreshold && time.Since(pool.lastDownScale) >= downScaleMinInterval {
+		if wp.utilization() < utilizationThreshold && time.Since(wp.lastDownScale) >= downScaleMinInterval {
 			logger.Debug().Msgf("Scaling worker count DOWN from %d to %d", currentTarget, newTargetCount)
-			if err := pool.stopWorkers(int(currentTarget - newTargetCount)); err != nil {
+			if err := wp.stopWorkers(int(currentTarget - newTargetCount)); err != nil {
 				logger.Warn().Err(err).Msg("stopWorkers failed")
 			} else {
-				pool.lastDownScale = time.Now()
+				wp.lastDownScale = time.Now()
 			}
 		} else {
 			logger.Debug().
 				Msgf("Skipping down-scale: util=%.2f, sinceLast=%s",
-					pool.utilization(), time.Since(pool.lastDownScale))
+					wp.utilization(), time.Since(wp.lastDownScale))
 		}
 
 	default:
@@ -137,9 +137,9 @@ func (wp *workerPool) busyWorkers() []xid.ID {
 }
 
 // enqueueWorkerScaling enqueues a worker count scaling request.
-func (p *workerPool) enqueueWorkerScaling(target int32) {
+func (wp *workerPool) enqueueWorkerScaling(target int32) {
 	select {
-	case <-p.stopPoolChan:
+	case <-wp.stopPoolChan:
 		// Worker pool is shutting down, exit
 		return
 	default:
@@ -147,14 +147,14 @@ func (p *workerPool) enqueueWorkerScaling(target int32) {
 
 	// Drain any stale target so the buffer never blocks
 	select {
-	case <-p.workerCountChan:
+	case <-wp.workerCountChan:
 	default:
 	}
 
 	// Attempt to send, but abort if stopPoolChan closes
 	select {
-	case p.workerCountChan <- target:
-	case <-p.stopPoolChan:
+	case wp.workerCountChan <- target:
+	case <-wp.stopPoolChan:
 	}
 }
 
