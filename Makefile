@@ -1,4 +1,4 @@
-.PHONY: explain test fmt lint default
+.PHONY: explain test fmt lint lint-json default
 
 .DEFAULT_GOAL := explain
 
@@ -14,6 +14,7 @@ explain:
 	@echo "  test             - Run tests."
 	@echo "  fmt              - Run go fmt."
 	@echo "  lint             - Run golangci-lint."
+	@echo "  lint-json        - Run golangci-lint (JSON output)."
 	@echo "  explain          - Display this help message."
 
 # Flag V=1 for verbose mode
@@ -37,5 +38,9 @@ fmt:
 	@gofmt -w .
 
 lint:
-	@echo "==> Running linter (golangci-lint)..."
+	@echo "==> Running golangci-lint..."
 	@golangci-lint run
+
+lint-json:
+	@echo "==> Running golangci-lint (JSON output)..."
+	@golangci-lint run --output.json.path stdout
