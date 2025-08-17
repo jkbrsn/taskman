@@ -115,9 +115,7 @@ func (wp *workerPool) adjustWorkerCount(newTargetCount int32) {
 // busyStateWorkers returns two slices of worker IDs:
 // 1. Busy workers
 // 2. Idle workers
-func (wp *workerPool) busyAndIdleWorkers() ([]xid.ID, []xid.ID) {
-	var busyWorkers []xid.ID
-	var idleWorkers []xid.ID
+func (wp *workerPool) busyAndIdleWorkers() (busyWorkers []xid.ID, idleWorkers []xid.ID) {
 	wp.workers.Range(func(key, value any) bool {
 		workerID, ok := key.(xid.ID)
 		if !ok {
