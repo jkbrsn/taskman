@@ -438,8 +438,13 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 
 	// Consume task1Executed to prevent it from blocking
 	go func() {
-		for range task1Executed {
-			// Do nothing
+		for {
+			select {
+			case <-task1Executed:
+				// drained
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
