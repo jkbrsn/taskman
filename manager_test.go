@@ -39,7 +39,7 @@ func (mt MockTask) Execute() error {
 }
 
 // Helper function to determine the buffer size of a channel
-func getChannelBufferSize(ch interface{}) int {
+func getChannelBufferSize(ch any) int {
 	switch v := ch.(type) {
 	case chan Task:
 		return cap(v)

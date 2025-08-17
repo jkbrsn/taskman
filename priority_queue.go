@@ -28,7 +28,7 @@ func (pq priorityQueue) Swap(i, j int) {
 }
 
 // Push adds a job to the heap.
-func (pq *priorityQueue) Push(x interface{}) {
+func (pq *priorityQueue) Push(x any) {
 	n := len(*pq)
 	job := x.(*Job)
 	job.index = n
@@ -36,7 +36,7 @@ func (pq *priorityQueue) Push(x interface{}) {
 }
 
 // Pop removes and returns the job with the earliest NextExec time.
-func (pq *priorityQueue) Pop() interface{} {
+func (pq *priorityQueue) Pop() any {
 	old := *pq
 	n := len(old)
 	job := old[n-1]
