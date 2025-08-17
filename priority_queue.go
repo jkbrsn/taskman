@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// TODO: can we apply generics to avoid type assertions?
+//		 perhaps use threadsafe.Queue or an adaption?
+
 // priorityQueue implements heap.Interface and holds Jobs.
 // Priority is determined by the NextExec time of the Job.
 type priorityQueue []*Job
@@ -30,7 +33,10 @@ func (pq priorityQueue) Swap(i, j int) {
 // Push adds a job to the heap.
 func (pq *priorityQueue) Push(x any) {
 	n := len(*pq)
-	job := x.(*Job)
+	job, ok := x.(*Job)
+	if !ok || job == nil {
+		return
+	}
 	job.index = n
 	*pq = append(*pq, job)
 }

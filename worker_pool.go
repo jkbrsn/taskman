@@ -20,6 +20,7 @@ const (
 
 // workerPool manages a pool of workers that execute tasks.
 type workerPool struct {
+	// TODO: change workers to threadsafe.Map
 	workers           sync.Map     // Map worker ID (xid.ID) to worker (workerInfo)
 	workersActive     atomic.Int32 // Number of active workers
 	workersRunning    atomic.Int32 // Number of running workers
@@ -118,9 +119,15 @@ func (wp *workerPool) busyAndIdleWorkers() ([]xid.ID, []xid.ID) {
 	var busyWorkers []xid.ID
 	var idleWorkers []xid.ID
 	wp.workers.Range(func(key, value any) bool {
-		workerID := key.(xid.ID)
-		workerInfo := value.(*workerInfo)
-		if workerInfo.busy.Load() {
+		workerID, ok := key.(xid.ID)
+		if !ok {
+			return true
+		}
+		wi, ok := value.(*workerInfo)
+		if !ok || wi == nil {
+			return true
+		}
+		if wi.busy.Load() {
 			busyWorkers = append(busyWorkers, workerID)
 		} else {
 			idleWorkers = append(idleWorkers, workerID)
