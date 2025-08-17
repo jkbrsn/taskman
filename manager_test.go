@@ -498,7 +498,8 @@ func TestConcurrentScheduleTask(t *testing.T) {
 
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
-	assert.Equal(t, expectedTasks, manager.jobsInQueue(), "Expected job queue length to be %d, got %d",
+	assert.Equal(t, expectedTasks, manager.jobsInQueue(),
+		"Expected job queue length to be %d, got %d",
 		expectedTasks, manager.jobsInQueue())
 }
 
@@ -683,24 +684,65 @@ func TestManagerMetrics(t *testing.T) {
 		// Verify the metrics
 		assert.Equal(t, int64(1), manager.metrics.totalTaskExecutions.Load(),
 			"Expected 1 total task to have been counted")
-		assert.GreaterOrEqual(t, manager.metrics.averageExecTime.Load(), executionTime, "Expected task execution time to be at least 10ms")
+		assert.GreaterOrEqual(
+			t,
+			manager.metrics.averageExecTime.Load(),
+			executionTime,
+			"Expected task execution time to be at least 10ms",
+		)
 	})
 
 	t.Run("Get Metrics", func(t *testing.T) {
 		metrics := manager.Metrics()
 
 		// Verify task execution metrics
-		assert.Equal(t, 1, metrics.TasksTotalExecutions, "Expected 1 total task to have been counted")
-		assert.GreaterOrEqual(t, metrics.TaskAverageExecTime, executionTime, "Expected task execution time to be at least %v", executionTime)
-		assert.Greater(t, metrics.TasksPerSecond, float32(0), "Expected tasks per second to be greater than 0")
+		assert.Equal(
+			t,
+			1,
+			metrics.TasksTotalExecutions,
+			"Expected 1 total task to have been counted",
+		)
+		assert.GreaterOrEqual(
+			t,
+			metrics.TaskAverageExecTime,
+			executionTime,
+			"Expected task execution time to be at least %v",
+			executionTime,
+		)
+		assert.Greater(
+			t,
+			metrics.TasksPerSecond,
+			float32(0),
+			"Expected tasks per second to be greater than 0",
+		)
 
 		// Verify worker pool metrics
 		assert.Equal(t, 0, metrics.WorkersActive, "Expected 2 active workers")
 		assert.Equal(t, workerCount, metrics.WorkersRunning, "Expected 2 running workers")
-		assert.Equal(t, workerCount, metrics.WorkerCountTarget, "Expected worker count target to be 2")
-		assert.GreaterOrEqual(t, metrics.WorkerUtilization, float32(0), "Expected worker utilization to be >= 0")
-		assert.LessOrEqual(t, metrics.WorkerUtilization, float32(1), "Expected worker utilization to be <= 1")
-		assert.Greater(t, metrics.WorkerScalingEvents, 0, "Expected at least 1 worker scaling event")
+		assert.Equal(
+			t,
+			workerCount,
+			metrics.WorkerCountTarget,
+			"Expected worker count target to be 2",
+		)
+		assert.GreaterOrEqual(
+			t,
+			metrics.WorkerUtilization,
+			float32(0),
+			"Expected worker utilization to be >= 0",
+		)
+		assert.LessOrEqual(
+			t,
+			metrics.WorkerUtilization,
+			float32(1),
+			"Expected worker utilization to be <= 1",
+		)
+		assert.Greater(
+			t,
+			metrics.WorkerScalingEvents,
+			0,
+			"Expected at least 1 worker scaling event",
+		)
 
 		// Verify job queue metrics
 		assert.Equal(t, 1, metrics.QueuedJobs, "Expected 1 job in queue")
@@ -714,10 +756,10 @@ func TestWorkerPoolScaling(t *testing.T) {
 	manager := NewCustom(1, 4, 1*time.Minute)
 	defer manager.Stop()
 
-	// The first two test cases sets cadences and task execution duration to values producing a predetermined number of
-	// needed workers. The third test case uses a larger number of tasks to force scaling up. The fourth test case uses
+	// The first two test cases sets cadences and task execution duration to values
+	// producing a predetermined number of needed workers. The third test case uses
+	// a larger number of tasks to force scaling up. The fourth test case uses
 	// removes jobs to force scaling down.
-
 	t.Run("ScaleUpBasedOnJobWidth", func(t *testing.T) {
 		job := Job{
 			ID:       "test-job-width-scaling",
@@ -735,9 +777,15 @@ func TestWorkerPoolScaling(t *testing.T) {
 		}
 		err := manager.ScheduleJob(job)
 		assert.Nil(t, err, "Expected no error scheduling job")
-		time.Sleep(5 * time.Millisecond) // Allow time for job to be scheduled + worker pool to scale
+		time.Sleep(5 * time.Millisecond) // Allow time for job to be scheduled +
+		// worker pool to scale
 
-		assert.Equal(t, manager.workerPool.targetWorkerCount(), int32(4), "Expected target worker count to be 2 x the job task count")
+		assert.Equal(
+			t,
+			manager.workerPool.targetWorkerCount(),
+			int32(4),
+			"Expected target worker count to be 2 x the job task count",
+		)
 	})
 
 	t.Run("ScaleUpBasedOnConcurrencyNeeds", func(t *testing.T) {
@@ -761,7 +809,12 @@ func TestWorkerPoolScaling(t *testing.T) {
 		time.Sleep(5 * time.Millisecond) // Allow time for worker pool to scale
 
 		// Check greater than rather than an exact number, as computation time may vary
-		assert.Greater(t, manager.workerPool.targetWorkerCount(), initialTargetWorkerCount, "Expected target worker count to be greater than initial count")
+		assert.Greater(
+			t,
+			manager.workerPool.targetWorkerCount(),
+			initialTargetWorkerCount,
+			"Expected target worker count to be greater than initial count",
+		)
 	})
 
 	t.Run("ScaleUpBasedOnImmediateNeed", func(t *testing.T) {
@@ -788,8 +841,17 @@ func TestWorkerPoolScaling(t *testing.T) {
 		// Expected worker count is 1.5 x (the current worker count + extra workers needed)
 		// Note: we'll assert within a delta here, since the state of the worker pool variables may
 		//       have changed since the time the pool was scaled.
-		expectedWorkerCount := math.Ceil((float64(runningWorkers) + (4.0 - float64(availableWorkers))) * 1.5)
-		assert.InDelta(t, expectedWorkerCount, manager.workerPool.targetWorkerCount(), 2.0, "Expected target worker count to be max 2.0 away from %d", expectedWorkerCount)
+		expectedWorkerCount := math.Ceil(
+			(float64(runningWorkers) + (4.0 - float64(availableWorkers))) * 1.5,
+		)
+		assert.InDelta(
+			t,
+			expectedWorkerCount,
+			manager.workerPool.targetWorkerCount(),
+			2.0,
+			"Expected target worker count to be max 2.0 away from %d",
+			expectedWorkerCount,
+		)
 	})
 
 	t.Run("ScaleDown", func(t *testing.T) {
@@ -812,7 +874,8 @@ func TestWorkerPoolScaling(t *testing.T) {
 		}
 		err := manager.ScheduleJob(job)
 		assert.Nil(t, err, "Expected no error scheduling job")
-		time.Sleep(5 * time.Millisecond) // Allow time for job to be scheduled + worker pool to scale
+		time.Sleep(5 * time.Millisecond) // Allow time for job to be scheduled +
+		// worker pool to scale
 
 		initialRunningWorkers := manager.workerPool.runningWorkers()
 		initialTargetWorkerCount := manager.workerPool.targetWorkerCount()
@@ -823,8 +886,18 @@ func TestWorkerPoolScaling(t *testing.T) {
 		time.Sleep(5 * time.Millisecond) // Allow time for job to be removed
 
 		// Check that the worker pool has scaled down
-		assert.Less(t, manager.workerPool.runningWorkers(), initialRunningWorkers, "Expected running worker count to be less than initial count")
-		assert.Less(t, manager.workerPool.targetWorkerCount(), initialTargetWorkerCount, "Expected target worker count to be less than initial count")
+		assert.Less(
+			t,
+			manager.workerPool.runningWorkers(),
+			initialRunningWorkers,
+			"Expected running worker count to be less than initial count",
+		)
+		assert.Less(
+			t,
+			manager.workerPool.targetWorkerCount(),
+			initialTargetWorkerCount,
+			"Expected target worker count to be less than initial count",
+		)
 	})
 
 	t.Run("ScaleUpRespectsMaxWorkerCount", func(t *testing.T) {
@@ -898,7 +971,13 @@ func TestWorkerPoolScaling(t *testing.T) {
 		time.Sleep(150 * time.Millisecond) // Allow time for job removal
 
 		// Check that the worker pool has scaled down
-		assert.Equal(t, int32(manager.minWorkerCount), manager.workerPool.targetWorkerCount(), "Expected target worker count to be %d after removing all jobs", manager.minWorkerCount)
+		assert.Equal(
+			t,
+			int32(manager.minWorkerCount),
+			manager.workerPool.targetWorkerCount(),
+			"Expected target worker count to be %d after removing all jobs",
+			manager.minWorkerCount,
+		)
 	})
 }
 
@@ -924,11 +1003,21 @@ func TestWorkerPoolPeriodicScaling(t *testing.T) {
 	assert.Nil(t, err, "Expected no error scheduling job")
 	time.Sleep(5 * time.Millisecond) // Allow time for job to be scheduled + worker pool to scale
 
-	assert.Equal(t, manager.workerPool.targetWorkerCount(), int32(2), "Expected target worker count to be 2 x the job task count")
+	assert.Equal(
+		t,
+		manager.workerPool.targetWorkerCount(),
+		int32(2),
+		"Expected target worker count to be 2 x the job task count",
+	)
 
 	time.Sleep(50 * time.Millisecond) // Allow time for periodic scaling to occur
 
-	assert.GreaterOrEqual(t, manager.workerPool.targetWorkerCount(), int32(4), "Expected target worker count to be greater or equal than 4")
+	assert.GreaterOrEqual(
+		t,
+		manager.workerPool.targetWorkerCount(),
+		int32(4),
+		"Expected target worker count to be greater or equal than 4",
+	)
 }
 
 func TestTaskExecutionAt(t *testing.T) {
@@ -1016,7 +1105,13 @@ func TestTaskExecutionAt(t *testing.T) {
 		// Verify the task executed at the correct time
 		execTime := <-executionTimes
 		elapsed := execTime.Sub(start)
-		assert.GreaterOrEqual(t, elapsed, execDelay, "Task executed after %v, expected around 25ms", elapsed)
+		assert.GreaterOrEqual(
+			t,
+			elapsed,
+			execDelay,
+			"Task executed after %v, expected around 25ms",
+			elapsed,
+		)
 	})
 }
 

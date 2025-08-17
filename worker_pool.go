@@ -94,8 +94,13 @@ func (wp *workerPool) adjustWorkerCount(newTargetCount int32) {
 
 	case newTargetCount < currentTarget:
 		// Scale down based on utilization and debounce
-		if wp.utilization() < utilizationThreshold && time.Since(wp.lastDownScale) >= downScaleMinInterval {
-			logger.Debug().Msgf("Scaling worker count DOWN from %d to %d", currentTarget, newTargetCount)
+		if wp.utilization() < utilizationThreshold &&
+			time.Since(wp.lastDownScale) >= downScaleMinInterval {
+			logger.Debug().Msgf(
+				"Scaling worker count DOWN from %d to %d",
+				currentTarget,
+				newTargetCount,
+			)
 			if err := wp.stopWorkers(int(currentTarget - newTargetCount)); err != nil {
 				logger.Warn().Err(err).Msg("stopWorkers failed")
 			} else {
@@ -169,7 +174,8 @@ func (wp *workerPool) idleWorkers() []xid.ID {
 	return idleWorkers
 }
 
-// processWorkerCountScaling listens for worker count requests and adjusts the worker count accordingly.
+// processWorkerCountScaling listens for worker count requests and adjusts the
+// worker count accordingly.
 func (wp *workerPool) processWorkerCountScaling() {
 	for {
 		select {
@@ -218,7 +224,10 @@ func (wp *workerPool) startWorker(id xid.ID) {
 
 				defer func() {
 					if r := recover(); r != nil {
-						logger.Error().Msgf("Worker %s: panic: %v\n%s", id, r, string(debug.Stack()))
+						logger.Error().Msgf(
+							"Worker %s: panic: %v\n%s",
+							id, r, string(debug.Stack()),
+						)
 						err := fmt.Errorf("worker %s: panic: %v", id, r)
 						select {
 						case wp.errorChan <- err:
@@ -310,7 +319,11 @@ func (wp *workerPool) stopWorkers(workersToStop int) error {
 		return fmt.Errorf("invalid number of workers to remove: %d", workersToStop)
 	}
 	if workersToStop > int(wp.runningWorkers()) {
-		return fmt.Errorf("cannot remove %d out of %d running workers", workersToStop, wp.runningWorkers())
+		return fmt.Errorf(
+			"cannot remove %d out of %d running workers",
+			workersToStop,
+			wp.runningWorkers(),
+		)
 	}
 	logger.Debug().Msgf("Removing %d workers from the pool", workersToStop)
 
