@@ -110,13 +110,16 @@ func TestManagerStop(t *testing.T) {
 
 	// Attempt to add a task after stopping
 	testChan := make(chan bool)
-	testTask := MockTask{ID: "a-task", cadence: 50 * time.Millisecond, executeFunc: func() error {
-		testChan <- true
-		return nil
-	}}
-	manager.ScheduleTask(testTask, testTask.cadence)
+	testTask := MockTask{
+		ID: "a-task", cadence: 50 * time.Millisecond, executeFunc: func() error {
+			testChan <- true
+			return nil
+		},
+	}
+	_, err := manager.ScheduleTask(testTask, testTask.cadence)
 
 	// Since the manager is stopped, the task should not have been added to the job queue
+	assert.Error(t, err)
 	if manager.jobsInQueue() != 0 {
 		t.Fatalf("Expected job queue length to be 0, got %d", manager.jobsInQueue())
 	}
@@ -293,7 +296,8 @@ func TestTaskExecution(t *testing.T) {
 		},
 	}
 
-	manager.ScheduleTask(testTask, testTask.cadence)
+	_, err := manager.ScheduleTask(testTask, testTask.cadence)
+	assert.NoError(t, err)
 
 	select {
 	case execTime := <-executionTimes:
@@ -325,7 +329,8 @@ func TestTaskRescheduling(t *testing.T) {
 		},
 	}
 
-	manager.ScheduleTask(mockTask, mockTask.cadence)
+	_, err := manager.ScheduleTask(mockTask, mockTask.cadence)
+	assert.NoError(t, err)
 
 	// Wait for the task to execute multiple times
 	// Sleeing for 350ms should allow for about 3 executions
@@ -400,7 +405,8 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 	}
 
 	// Schedule first task
-	manager.ScheduleTask(testTask1, testTask1.cadence)
+	_, err := manager.ScheduleTask(testTask1, testTask1.cadence)
+	assert.NoError(t, err)
 	start := time.Now()
 
 	select {
@@ -418,7 +424,8 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 	}()
 
 	// Schedule second task after we've had at least one execution of the first task
-	manager.ScheduleTask(testTask2, testTask2.cadence)
+	_, err = manager.ScheduleTask(testTask2, testTask2.cadence)
+	assert.NoError(t, err)
 
 	// Sleep enough time to make sure both tasks have executed at least once
 	time.Sleep(30 * time.Millisecond)
@@ -509,7 +516,8 @@ func TestZeroCadenceTask(t *testing.T) {
 		testChan <- true
 		return nil
 	}}
-	manager.ScheduleTask(testTask, testTask.cadence)
+	_, err := manager.ScheduleTask(testTask, testTask.cadence)
+	assert.Error(t, err, "Expected error adding task with zero cadence")
 
 	// Expect the task to not execute
 	select {
@@ -573,7 +581,8 @@ func TestValidateJob(t *testing.T) {
 		NextExec: time.Now().Add(100 * time.Millisecond),
 		Tasks:    []Task{MockTask{ID: "task1"}},
 	}
-	manager.ScheduleJob(alreadyPresentJob)
+	assert.NoError(t, manager.ScheduleJob(alreadyPresentJob))
+
 	duplicateJob := alreadyPresentJob
 	err = manager.validateJob(duplicateJob)
 	assert.Error(t, err, "Expected error for duplicate job ID")
@@ -636,7 +645,7 @@ func TestManagerMetrics(t *testing.T) {
 				return nil
 			}}},
 		}
-		manager.ScheduleJob(job)
+		assert.NoError(t, manager.ScheduleJob(job))
 
 		// Wait for the task to execute and the metrics to be updated
 		wg.Wait()
@@ -907,9 +916,8 @@ func TestTaskExecutionAt(t *testing.T) {
 				return nil
 			}}},
 		}
-		err := manager.ScheduleJob(job)
-		assert.NoError(t, err, "Expected no error scheduling job")
-		defer manager.RemoveJob(job.ID)
+		assert.NoError(t, manager.ScheduleJob(job), "Expected no error scheduling job")
+		defer func() { assert.NoError(t, manager.RemoveJob(job.ID)) }()
 
 		// Expect the task to execute immediately
 		select {
@@ -931,9 +939,8 @@ func TestTaskExecutionAt(t *testing.T) {
 				return nil
 			}}},
 		}
-		err := manager.ScheduleJob(job)
-		assert.NoError(t, err, "Expected no error scheduling job")
-		defer manager.RemoveJob(job.ID)
+		assert.NoError(t, manager.ScheduleJob(job), "Expected no error scheduling job")
+		defer func() { assert.NoError(t, manager.RemoveJob(job.ID)) }()
 
 		// Expect the task to execute immediately
 		select {

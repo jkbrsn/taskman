@@ -239,7 +239,7 @@ func TestStopWorker(t *testing.T) {
 	assert.Equal(t, 2, len(idleWorkers), "Expected 2 idle workers")
 
 	// Stop one of the workers
-	pool.stopWorker(idleWorkers[0])
+	assert.NoError(t, pool.stopWorker(idleWorkers[0]))
 	time.Sleep(10 * time.Millisecond) // Wait for worker to stop
 
 	// Confirm running workers after stopping one
@@ -262,7 +262,7 @@ func TestStopWorker(t *testing.T) {
 	assert.Equal(t, 1, len(pool.busyWorkers()), "Expected 1 busy worker")
 
 	// Stop the remaining worker
-	pool.stopWorker(idleWorkers[1])
+	assert.NoError(t, pool.stopWorker(idleWorkers[1]))
 	time.Sleep(5 * time.Millisecond) // Wait for stop to take effect
 
 	// Confirm worker hasn't stopped during execution
@@ -301,7 +301,7 @@ func TestStopWorkers(t *testing.T) {
 	assert.Equal(t, int32(6), pool.runningWorkers(), "Expected 6 running workers")
 
 	// Stop two workers
-	pool.stopWorkers(2)
+	assert.NoError(t, pool.stopWorkers(2))
 	time.Sleep(10 * time.Millisecond) // Wait for workers to stop
 
 	// Confirm worker counts after stopping two workers
@@ -331,7 +331,7 @@ func TestStopWorkers(t *testing.T) {
 	assert.Equal(t, int32(3), pool.activeWorkers(), "Expected 3 active workers")
 
 	// Stop more workers than there are idle workers available
-	pool.stopWorkers(2)
+	assert.NoError(t, pool.stopWorkers(2))
 	time.Sleep(5 * time.Millisecond) // Wait for idle worker to stop
 
 	// Confirm worker counts again, only 1 worker should have been be stopped
@@ -351,7 +351,7 @@ func TestStopWorkers(t *testing.T) {
 	assert.Equal(t, int32(2), pool.runningWorkers(), "Expected 2 running workers")
 
 	// Stop more workers than there are workers in the pool
-	pool.stopWorkers(10)
+	assert.Error(t, pool.stopWorkers(10))
 
 	// Confirm no workers were stopped
 	assert.Equal(t, 2, len(pool.idleWorkers()), "Expected 2 idle workers")
