@@ -70,7 +70,6 @@ func TestWorkerPoolTaskExecution(t *testing.T) {
 		case <-timeout:
 			return
 		}
-
 	}()
 
 	// Send the task to the worker and verify active workers during task execution
@@ -114,7 +113,6 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 		case <-timeout:
 			assert.Fail(t, "Test timed out waiting on error")
 		}
-
 	}()
 
 	// Send the error-returning task to the worker
@@ -154,7 +152,6 @@ func TestWorkerPoolExecutionPanic(t *testing.T) {
 		case <-timeout:
 			assert.Fail(t, "Test timed out waiting on error")
 		}
-
 	}()
 
 	// Send the panic-returning task to the worker
@@ -319,7 +316,7 @@ func TestStopWorkers(t *testing.T) {
 		},
 		ID: "task-1",
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		taskChan <- task
 	}
 
@@ -341,7 +338,7 @@ func TestStopWorkers(t *testing.T) {
 	assert.Equal(t, int32(3), pool.runningWorkers(), "Expected 3 running workers")
 
 	// Wait for tasks to complete, which should free up the workers to be stopped
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-taskCompleted
 	}
 	time.Sleep(5 * time.Millisecond)
