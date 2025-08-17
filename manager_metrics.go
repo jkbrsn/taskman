@@ -59,7 +59,8 @@ func (mm *managerMetrics) consumeExecTime(execTimeChan <-chan time.Duration) {
 			taskExecutions := mm.totalTaskExecutions.Load()
 
 			// Calculate the new average execution time
-			newAvgExecTime := (avgExecTime*time.Duration(taskExecutions) + execTime) / time.Duration(taskExecutions+1)
+			newAvgExecTime := (avgExecTime*time.Duration(taskExecutions) + execTime) /
+				time.Duration(taskExecutions+1)
 
 			// Store the updated metrics
 			mm.averageExecTime.Store(newAvgExecTime)
@@ -93,7 +94,9 @@ func (mm *managerMetrics) updateTaskMetrics(taskDelta int, taskCadence time.Dura
 	tasksPerSecond := calcTasksPerSecond(taskDelta, taskCadence)
 
 	// Update the tasks per second metric base on a weighted average
-	newTasksPerSecond := (tasksPerSecond*float32(taskDelta) + mm.tasksPerSecond.Load()*float32(currentTaskCount)) / float32(newTaskCount)
+	newTasksPerSecond := (tasksPerSecond*float32(taskDelta) +
+		mm.tasksPerSecond.Load()*float32(currentTaskCount)) /
+		float32(newTaskCount)
 
 	// Store updated values
 	mm.tasksPerSecond.Store(newTasksPerSecond)

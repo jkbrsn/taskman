@@ -1,3 +1,4 @@
+// Package taskman provides a simple task scheduler with a worker pool.
 package taskman
 
 import (
@@ -151,7 +152,10 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 	if err != nil {
 		return err
 	}
-	logger.Debug().Msgf("Scheduling job with %d tasks with ID '%s' and cadence %v", len(job.Tasks), job.ID, job.Cadence)
+	logger.Debug().Msgf(
+		"Scheduling job with %d tasks with ID '%s' and cadence %v",
+		len(job.Tasks), job.ID, job.Cadence,
+	)
 
 	// Check if the task manager is stopped
 	select {
@@ -204,8 +208,8 @@ func (tm *TaskManager) ScheduleTask(task Task, cadence time.Duration) (string, e
 	return jobID, tm.ScheduleJob(job)
 }
 
-// ScheduleTasks takes a slice of Task and adds them to the TaskManager in a Job. Creates and returns a
-// randomized ID, used to identify the Job within the task manager.
+// ScheduleTasks takes a slice of Task and adds them to the TaskManager in a Job.
+// Creates and returns a randomized ID, used to identify the Job within the task manager.
 func (tm *TaskManager) ScheduleTasks(tasks []Task, cadence time.Duration) (string, error) {
 	jobID := xid.New().String()
 
@@ -404,21 +408,28 @@ func (tm *TaskManager) periodicWorkerScaling() {
 // - The average execution time and concurrency of tasks
 // - The number of tasks in the latest job related to available workers at the moment
 func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
-	logger.Debug().Msgf("Scaling workers, available/running: %d/%d", tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers())
-	bufferFactor50 := 1.5
+	logger.Debug().Msgf(
+		"Scaling workers, available/running: %d/%d",
+		tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers(),
+	)
+	const bufferFactor50 = 1.5
 	bufferFactor100 := 2.0
 
 	// Calculate the number of workers needed based on the widest job
 	workersNeededParallelTasks := tm.metrics.maxJobWidth.Load()
 	// Apply the larger buffer factor for parallel tasks, as this is a low predictability metric
-	workersNeededParallelTasks = int32(math.Ceil(float64(workersNeededParallelTasks) * bufferFactor100))
+	workersNeededParallelTasks = int32(
+		math.Ceil(float64(workersNeededParallelTasks) * bufferFactor100),
+	)
 
 	// Calculate the number of workers needed based on the average execution time and tasks/s
 	avgExecTimeSeconds := tm.metrics.averageExecTime.Load().Seconds()
 	tasksPerSecond := float64(tm.metrics.tasksPerSecond.Load())
 	workersNeededConcurrently := int32(math.Ceil(avgExecTimeSeconds * tasksPerSecond))
 	// Apply the smaller buffer factor for concurrent tasks, as this is a more predictable metric
-	workersNeededConcurrently = int32(math.Ceil(float64(workersNeededConcurrently) * bufferFactor50))
+	workersNeededConcurrently = int32(
+		math.Ceil(float64(workersNeededConcurrently) * bufferFactor50),
+	)
 
 	// Calculate the number of workers needed right now
 	var workersNeededImmediately int32
@@ -426,11 +437,19 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 		// If there are not enough workers to handle the incoming job, scale up immediately
 		extraWorkersNeeded := int32(workersNeededNow) - tm.workerPool.availableWorkers()
 		// Apply the smaller buffer factor for immediate tasks, as this is a more predictable metric
-		workersNeededImmediately = int32(math.Ceil(float64(tm.workerPool.runningWorkers()+extraWorkersNeeded) * bufferFactor50))
+		workersNeededImmediately = int32(
+			math.Ceil(
+				float64(tm.workerPool.runningWorkers()+extraWorkersNeeded) * bufferFactor50,
+			),
+		)
 	}
 
 	// Use the highest of the three metrics
-	workersNeeded := max(workersNeededParallelTasks, workersNeededConcurrently, workersNeededImmediately)
+	workersNeeded := max(
+		workersNeededParallelTasks,
+		workersNeededConcurrently,
+		workersNeededImmediately,
+	)
 	// Ensure the worker pool has at least the minimum number of workers
 	workersNeeded = max(workersNeeded, int32(tm.minWorkerCount))
 	// Ensure the worker pool has at most the maximum number of workers
@@ -453,7 +472,8 @@ func (tm *TaskManager) validateJob(job Job) error {
 	if len(job.Tasks) == 0 {
 		return errors.New("job has no tasks")
 	}
-	// Jobs with a NextExec time more than one Cadence old are invalid, as they would re-execute continually.
+	// Jobs with a NextExec time more than one Cadence old are invalid,
+	// as they would re-execute continually.
 	if job.NextExec.Before(time.Now().Add(-job.Cadence)) {
 		return errors.New("job NextExec is too early")
 	}
@@ -531,16 +551,34 @@ func New() *TaskManager {
 	autoScaleInterval := defaultScaleInterval
 	workerPoolDone := make(chan struct{})
 
-	return newTaskManager(taskChan, errorChan, execTimeChan, initialWorkerCount, autoScaleInterval, workerPoolDone)
+	return newTaskManager(
+		taskChan,
+		errorChan,
+		execTimeChan,
+		initialWorkerCount,
+		autoScaleInterval,
+		workerPoolDone,
+	)
 }
 
 // NewCustom creates, starts and returns a new TaskManager using custom values for the task
 // manager parameters.
-func NewCustom(initialWorkerCount, channelBufferSize int, autoScaleInterval time.Duration) *TaskManager {
+func NewCustom(
+	initialWorkerCount int,
+	channelBufferSize int,
+	autoScaleInterval time.Duration,
+) *TaskManager {
 	taskChan := make(chan Task, channelBufferSize)
 	errorChan := make(chan error, channelBufferSize)
 	execTimeChan := make(chan time.Duration, channelBufferSize)
 	workerPoolDone := make(chan struct{})
 
-	return newTaskManager(taskChan, errorChan, execTimeChan, initialWorkerCount, autoScaleInterval, workerPoolDone)
+	return newTaskManager(
+		taskChan,
+		errorChan,
+		execTimeChan,
+		initialWorkerCount,
+		autoScaleInterval,
+		workerPoolDone,
+	)
 }

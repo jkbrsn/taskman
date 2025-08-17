@@ -147,7 +147,8 @@ func TestScheduleFunc(t *testing.T) {
 		t.Fatalf("Error adding function: %v", err)
 	}
 
-	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d", manager.jobsInQueue())
+	assert.Equal(t, 1, manager.jobsInQueue(),
+		"Expected job queue length to be 1, got %d", manager.jobsInQueue())
 
 	job := manager.jobQueue[0]
 	assert.Equal(t, 1, len(job.Tasks), "Expected job to have 1 task, got %d", len(job.Tasks))
@@ -164,7 +165,8 @@ func TestScheduleTask(t *testing.T) {
 		t.Fatalf("Error adding task: %v", err)
 	}
 
-	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d", manager.jobsInQueue())
+	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d",
+		manager.jobsInQueue())
 
 	job := manager.jobQueue[0]
 	assert.Equal(t, 1, len(job.Tasks), "Expected job to have 1 task, got %d", len(job.Tasks))
@@ -180,7 +182,8 @@ func TestScheduleTasks(t *testing.T) {
 		{ID: "task1", cadence: 100 * time.Millisecond},
 		{ID: "task2", cadence: 100 * time.Millisecond},
 	}
-	// Explicitly convert []MockTask to []Task to satisfy the ScheduleTasks method signature, since slices are not covariant in Go
+	// Explicitly convert []MockTask to []Task to satisfy the ScheduleTasks
+	// method signature, since slices are not covariant in Go
 	tasks := make([]Task, len(mockTasks))
 	for i, task := range mockTasks {
 		tasks[i] = task
@@ -191,7 +194,8 @@ func TestScheduleTasks(t *testing.T) {
 	}
 
 	// Assert that the job was added
-	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d", manager.jobsInQueue())
+	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d",
+		manager.jobsInQueue())
 	job := manager.jobQueue[0]
 	assert.Equal(t, 2, len(job.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
 	assert.Equal(t, jobID, job.ID, "Expected job ID to be %s, got %s", jobID, job.ID)
@@ -208,10 +212,13 @@ func TestScheduleJob(t *testing.T) {
 	}
 
 	// Assert that the job was added
-	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d", manager.jobsInQueue())
+	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d",
+		manager.jobsInQueue())
 	scheduledJob := manager.jobQueue[0]
-	assert.Equal(t, len(job.Tasks), len(scheduledJob.Tasks), "Expected job to have 2 tasks, got %d", len(job.Tasks))
-	assert.Equal(t, job.ID, scheduledJob.ID, "Expected job ID to be %s, got %s", scheduledJob.ID, job.ID)
+	assert.Equal(t, len(job.Tasks), len(scheduledJob.Tasks),
+		len(job.Tasks), "Expected job to have 2 tasks, got %d")
+	assert.Equal(t, job.ID, scheduledJob.ID, "Expected job ID to be %s, got %s",
+		scheduledJob.ID, job.ID)
 }
 
 func TestRemoveJob(t *testing.T) {
@@ -223,7 +230,8 @@ func TestRemoveJob(t *testing.T) {
 	assert.Nil(t, err, "Error adding job")
 
 	// Assert that the job was added
-	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d", manager.jobsInQueue())
+	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d",
+		manager.jobsInQueue())
 	qJob := manager.jobQueue[0]
 	assert.Equal(t, job.ID, qJob.ID, "Expected job ID to be %s, got %s", job.ID, qJob.ID)
 	assert.Equal(t, 2, len(qJob.Tasks), "Expected job to have 2 tasks, got %d", len(qJob.Tasks))
@@ -233,7 +241,8 @@ func TestRemoveJob(t *testing.T) {
 	assert.Nil(t, err, "Error removing job")
 
 	// Assert that the job was removed
-	assert.Equal(t, 0, manager.jobsInQueue(), "Expected job queue length to be 0, got %d", manager.jobsInQueue())
+	assert.Equal(t, 0, manager.jobsInQueue(), "Expected job queue length to be 0, got %d",
+		manager.jobsInQueue())
 
 	// Try removing the job once more
 	err = manager.RemoveJob(job.ID)
@@ -249,7 +258,8 @@ func TestReplaceJob(t *testing.T) {
 	err := manager.ScheduleJob(firstJob)
 	assert.Nil(t, err, "Error adding job")
 	// Assert job added
-	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d", manager.jobsInQueue())
+	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d",
+		manager.jobsInQueue())
 	qJob := manager.jobQueue[0]
 	assert.Equal(t, firstJob.ID, qJob.ID, "Expected ID to be '%s', got '%s'", firstJob.ID, qJob.ID)
 
@@ -258,15 +268,21 @@ func TestReplaceJob(t *testing.T) {
 	err = manager.ReplaceJob(secondJob)
 	assert.Nil(t, err, "Error replacing job")
 	// Assert that the job was replaced in the queue
-	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d", manager.jobsInQueue())
+	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d",
+		manager.jobsInQueue())
 	qJob = manager.jobQueue[0]
 	// The queue job should retain the index and NextExec time of the first job
-	assert.Equal(t, firstJob.index, qJob.index, "Expected index to be '%s', got '%s'", secondJob.index, qJob.index)
-	assert.Equal(t, firstJob.NextExec, qJob.NextExec, "Expected ID to be '%s', got '%s'", secondJob.NextExec, qJob.NextExec)
+	assert.Equal(t, firstJob.index, qJob.index, "Expected index to be '%s', got '%s'",
+		secondJob.index, qJob.index)
+	assert.Equal(t, firstJob.NextExec, qJob.NextExec, "Expected ID to be '%s', got '%s'",
+		secondJob.NextExec, qJob.NextExec)
 	// The queue job should have the ID, cadence and tasks of the new (second) job
-	assert.Equal(t, secondJob.ID, qJob.ID, "Expected ID to be '%s', got '%s'", secondJob.ID, qJob.ID)
-	assert.Equal(t, secondJob.Cadence, qJob.Cadence, "Expected cadence to be '%s', got '%s'", secondJob.Cadence, qJob.Cadence)
-	assert.Equal(t, len(secondJob.Tasks), len(qJob.Tasks), "Expected job to have %d tasks, got %d", len(secondJob.Tasks), len(qJob.Tasks))
+	assert.Equal(t, secondJob.ID, qJob.ID, "Expected ID to be '%s', got '%s'",
+		secondJob.ID, qJob.ID)
+	assert.Equal(t, secondJob.Cadence, qJob.Cadence, "Expected cadence to be '%s', got '%s'",
+		secondJob.Cadence, qJob.Cadence)
+	assert.Equal(t, len(secondJob.Tasks), len(qJob.Tasks), "Expected job to have %d tasks, got %d",
+		len(secondJob.Tasks), len(qJob.Tasks))
 
 	// Try to replace a non-existing job
 	thirdJob := getMockedJob(2, "anotherJobID", 10*time.Millisecond, 100*time.Millisecond)
@@ -302,15 +318,17 @@ func TestTaskExecution(t *testing.T) {
 	select {
 	case execTime := <-executionTimes:
 		elapsed := time.Since(execTime)
-		assert.Greater(t, 150*time.Millisecond, elapsed, "Task executed after %v, expected around 100ms", elapsed)
+		assert.Greater(t, 150*time.Millisecond, elapsed,
+			"Task executed after %v, expected around 100ms", elapsed)
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("Task did not execute in expected time")
 	}
 }
 
 func TestTaskRescheduling(t *testing.T) {
-	// Make room in buffered channel for multiple errors (4), since we're not consuming them in this test
-	// and the error channel otherwise blocks the workers from executing tasks
+	// Make room in buffered channel for multiple errors (4), since we're not
+	// consuming them in this test and the error channel otherwise blocks the
+	// workers from executing tasks
 	manager := NewCustom(10, 4, 1*time.Minute)
 	defer manager.Stop()
 
@@ -413,7 +431,9 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 	case <-task1Executed:
 		// Task executed as expected
 	case <-time.After(20 * time.Millisecond):
-		t.Fatalf("Task 1 did not execute within the expected time frame (40ms), %v", time.Since(start))
+		t.Fatalf(
+			"Task 1 did not execute within the expected time frame (40ms), %v",
+			time.Since(start))
 	}
 
 	// Consume task1Executed to prevent it from blocking
@@ -444,8 +464,8 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 }
 
 func TestConcurrentScheduleTask(t *testing.T) {
-	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel) causes a race condition due to
-	//       the logger being shared across tests
+	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel)
+	// causes a race condition due to the logger being shared across tests
 
 	manager := NewCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
@@ -460,7 +480,8 @@ func TestConcurrentScheduleTask(t *testing.T) {
 			defer wg.Done()
 			for j := range numTasksPerGoroutine {
 				taskID := fmt.Sprintf("task-%d-%d", id, j)
-				// Use a long cadence to avoid task execution before test ends, as this changes the queue length
+				// Use a long cadence to avoid task execution before test ends,
+				// as this changes the queue length
 				task := MockTask{ID: taskID, cadence: 2 * time.Second}
 				_, err := manager.ScheduleTask(task, task.cadence)
 				assert.NoError(t, err, "Error adding task concurrently")
@@ -472,12 +493,13 @@ func TestConcurrentScheduleTask(t *testing.T) {
 
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
-	assert.Equal(t, expectedTasks, manager.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, manager.jobsInQueue())
+	assert.Equal(t, expectedTasks, manager.jobsInQueue(), "Expected job queue length to be %d, got %d",
+		expectedTasks, manager.jobsInQueue())
 }
 
 func TestConcurrentScheduleJob(t *testing.T) {
-	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel) causes a race condition due to
-	//       the logger being shared across tests
+	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel)
+	// causes a race condition due to the logger being shared across tests
 
 	manager := NewCustom(10, 1, 1*time.Minute)
 	defer manager.Stop()
@@ -492,7 +514,8 @@ func TestConcurrentScheduleJob(t *testing.T) {
 			defer wg.Done()
 			for j := range numTasksPerGoroutine {
 				jobID := fmt.Sprintf("task-%d-%d", id, j)
-				// Use a long cadence to avoid job execution before test ends, as this changes the queue length
+				// Use a long cadence to avoid job execution before test ends,
+				// as this changes the queue length
 				job := getMockedJob(1, jobID, 100*time.Millisecond, 2*time.Second)
 				err := manager.ScheduleJob(job)
 				assert.NoError(t, err, "Error adding job concurrently")
@@ -504,7 +527,8 @@ func TestConcurrentScheduleJob(t *testing.T) {
 
 	// Verify that all tasks are scheduled
 	expectedTasks := numGoroutines * numTasksPerGoroutine
-	assert.Equal(t, expectedTasks, manager.jobsInQueue(), "Expected job queue length to be %d, got %d", expectedTasks, manager.jobsInQueue())
+	assert.Equal(t, expectedTasks, manager.jobsInQueue(),
+		"Expected job queue length to be %d, got %d", expectedTasks, manager.jobsInQueue())
 }
 
 func TestZeroCadenceTask(t *testing.T) {
@@ -652,7 +676,8 @@ func TestManagerMetrics(t *testing.T) {
 		time.Sleep(10 * time.Millisecond) // Allow time for metrics to be updated
 
 		// Verify the metrics
-		assert.Equal(t, int64(1), manager.metrics.totalTaskExecutions.Load(), "Expected 1 total task to have been counted")
+		assert.Equal(t, int64(1), manager.metrics.totalTaskExecutions.Load(),
+			"Expected 1 total task to have been counted")
 		assert.GreaterOrEqual(t, manager.metrics.averageExecTime.Load(), executionTime, "Expected task execution time to be at least 10ms")
 	})
 
