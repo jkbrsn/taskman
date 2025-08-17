@@ -356,11 +356,6 @@ func (wp *workerPool) utilization() float64 {
 	return float64(wp.activeWorkers()) / float64(wp.runningWorkers())
 }
 
-// workerCountScalingChannel returns a write-only channel for scaling the worker count.
-func (wp *workerPool) workerCountScalingChannel() chan<- int32 {
-	return wp.workerCountChan
-}
-
 // newWorkerPool creates and returns a new worker pool.
 func newWorkerPool(
 	initialWorkerCount int,
