@@ -190,6 +190,50 @@ func (wp *workerPool) processWorkerCountScaling() {
 	}
 }
 
+// executeTask runs a single task with lifecycle, panic handling, and metrics.
+func (wp *workerPool) executeTask(w *workerInfo, id xid.ID, task Task) {
+	// Update worker state: busy
+	w.busy.Store(true)
+	wp.workersActive.Add(1)
+
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error().Msgf("Worker %s: panic: %v\n%s", id, r, string(debug.Stack()))
+			err := fmt.Errorf("worker %s: panic: %v", id, r)
+			select {
+			case wp.errorChan <- err:
+				// Error sent
+			default:
+				// Error channel not ready to receive, do nothing
+			}
+		}
+
+		// Update worker state: dormant
+		w.busy.Store(false)
+		wp.workersActive.Add(-1)
+		logger.Trace().Msgf("Worker %s: finished task", id)
+	}()
+
+	// Execute the task
+	start := time.Now()
+	if err := task.Execute(); err != nil {
+		// No retry policy is implemented, we just log and send the error for now
+		select {
+		case wp.errorChan <- err:
+			// Error sent
+		default:
+			// Error channel not ready to receive, do nothing
+		}
+	}
+	execTime := time.Since(start)
+	select {
+	case wp.execTimeChan <- execTime:
+		// Execution time sent
+	default:
+		// Execution time channel not ready to receive, do nothing
+	}
+}
+
 // startWorker executes tasks from the task channel.
 func (wp *workerPool) startWorker(id xid.ID) {
 	logger.Debug().Msgf("Starting worker %s", id)
@@ -216,53 +260,7 @@ func (wp *workerPool) startWorker(id xid.ID) {
 				return
 			}
 			logger.Trace().Msgf("Worker %s executing task", id)
-
-			func() {
-				// Update worker state: busy
-				worker.busy.Store(true)
-				wp.workersActive.Add(1)
-
-				defer func() {
-					if r := recover(); r != nil {
-						logger.Error().Msgf(
-							"Worker %s: panic: %v\n%s",
-							id, r, string(debug.Stack()),
-						)
-						err := fmt.Errorf("worker %s: panic: %v", id, r)
-						select {
-						case wp.errorChan <- err:
-							// Error sent
-						default:
-							// Error channel not ready to receive, do nothing
-						}
-					}
-
-					// Update worker state: dormant
-					worker.busy.Store(false)
-					wp.workersActive.Add(-1)
-					logger.Trace().Msgf("Worker %s: finished task", id)
-				}()
-
-				// Execute the task
-				start := time.Now()
-				err := task.Execute()
-				if err != nil {
-					// No retry policy is implemented, we just log and send the error for now
-					select {
-					case wp.errorChan <- err:
-						// Error sent
-					default:
-						// Error channel not ready to receive, do nothing
-					}
-				}
-				execTime := time.Since(start)
-				select {
-				case wp.execTimeChan <- execTime:
-					// Execution time sent
-				default:
-					// Execution time channel not ready to receive, do nothing
-				}
-			}()
+			wp.executeTask(worker, id, task)
 
 		case <-worker.stopChan:
 			logger.Debug().Msgf("Worker %s: received targeted stop signal, exiting", id)
