@@ -19,7 +19,7 @@ import (
 const (
 	maxWorkerCount       = 4096
 	defaultScaleInterval = 1 * time.Minute
-	defaultBufferedSize  = 64
+	defaultBufferSize    = 64
 )
 
 var (
@@ -36,6 +36,9 @@ func SetLogger(l zerolog.Logger) {
 func InitDefaultLogger() {
 	logger = zerolog.New(os.Stdout).With().Timestamp().Logger().Level(zerolog.InfoLevel)
 }
+
+// TMOption is a functional option for the TaskManager struct.
+type TMOption func(*TaskManager)
 
 // TaskManager manages task scheduling and execution. Tasks are scheduled within Jobs, and the
 // manager dispatches scheduled jobs to a worker pool for execution.
@@ -58,8 +61,11 @@ type TaskManager struct {
 	workerPoolDone chan struct{} // Channel to receive signal that the worker pool has stopped
 	errorChan      chan error    // Channel to receive errors from the worker pool
 	taskChan       chan Task     // Channel to send tasks to the worker pool
-	minWorkerCount int           // Minimum number of workers in the pool
-	scaleInterval  time.Duration // Interval for automatic scaling of the worker pool
+
+	// Options
+	channelBufferSize int           // Buffer size for task channels
+	minWorkerCount    int           // Minimum number of workers in the pool
+	scaleInterval     time.Duration // Interval for automatic scaling of the worker pool
 }
 
 // ErrorChannel returns a read-only channel for reading errors from task execution.
@@ -457,101 +463,83 @@ func (tm *TaskManager) validateJob(job Job) error {
 	return nil
 }
 
-// newTaskManager creates, initializes, and starts a new TaskManager.
-func newTaskManager(
-	taskChan chan Task,
-	errorChan chan error,
-	execTimeChan chan time.Duration,
-	minWorkerCount int,
-	scaleInterval time.Duration,
-	workerPoolDone chan struct{},
-) *TaskManager {
-	// Input validation
-	if taskChan == nil {
-		panic("taskChan cannot be nil")
-	}
-	if errorChan == nil {
-		panic("errorChan cannot be nil")
-	}
-	if execTimeChan == nil {
-		panic("execTimeChan cannot be nil")
-	}
-	if minWorkerCount <= 0 {
-		panic("initWorkerCount must be greater than 0")
-	}
-	if workerPoolDone == nil {
-		panic("workerPoolDone cannot be nil")
+// setDefaultOptions sets default values for the options of the TaskManager.
+func setDefaultOptions(tm *TaskManager) {
+	tm.channelBufferSize = defaultBufferSize
+	tm.minWorkerCount = runtime.NumCPU()
+	tm.scaleInterval = defaultScaleInterval
+}
+
+// start initializes metrics, creates the job queue and the channels, sets up the worker pool, and
+// then starts the task manager.
+func (tm *TaskManager) start() {
+	// Metrics
+	tm.metrics = &managerMetrics{
+		done: tm.workerPoolDone,
 	}
 
-	// Create and start the manager metrics
-	metrics := &managerMetrics{
-		done: workerPoolDone,
-	}
-
-	// Create the worker pool
-
-	ctx, cancel := context.WithCancel(context.Background())
-	tm := &TaskManager{
-		ctx:            ctx,
-		cancel:         cancel,
-		metrics:        metrics,
-		jobQueue:       make(priorityQueue, 0),
-		newJobChan:     make(chan bool, 2),
-		errorChan:      errorChan,
-		runDone:        make(chan struct{}),
-		taskChan:       taskChan,
-		workerPoolDone: workerPoolDone,
-		minWorkerCount: minWorkerCount,
-		scaleInterval:  scaleInterval,
-	}
-	tm.workerPool = newWorkerPool(minWorkerCount, errorChan, execTimeChan, taskChan, workerPoolDone)
-
+	// Job queue
+	tm.jobQueue = make(priorityQueue, 0)
 	heap.Init(&tm.jobQueue)
 
-	go metrics.consumeExecTime(execTimeChan)
+	// Channels
+	tm.taskChan = make(chan Task, tm.channelBufferSize)
+	tm.errorChan = make(chan error, tm.channelBufferSize)
+	tm.workerPoolDone = make(chan struct{})
+	tm.runDone = make(chan struct{})
+	tm.newJobChan = make(chan bool, 2)
+
+	// Worker pool
+	tm.workerPool = newWorkerPool(
+		tm.minWorkerCount,
+		tm.errorChan,
+		make(chan time.Duration, tm.channelBufferSize),
+		tm.taskChan,
+		tm.workerPoolDone,
+	)
+
+	go tm.metrics.consumeExecTime(tm.workerPool.execTimeChan)
 	go tm.run()
 	go tm.periodicWorkerScaling()
+}
+
+// New creates, initializes, starts and returns a new TaskManager. It uses default values for
+// the task manager parameters unless changed by the input opts.
+func New(opts ...TMOption) *TaskManager {
+	ctx, cancel := context.WithCancel(context.Background())
+	tm := &TaskManager{
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	setDefaultOptions(tm)
+
+	for _, opt := range opts {
+		opt(tm)
+	}
+
+	tm.start()
 
 	return tm
 }
 
-// New creates, starts and returns a new TaskManager with default values.
-func New() *TaskManager {
-	taskChan := make(chan Task, defaultBufferedSize)
-	errorChan := make(chan error, defaultBufferedSize)
-	execTimeChan := make(chan time.Duration, defaultBufferedSize)
-	initialWorkerCount := runtime.NumCPU()
-	autoScaleInterval := defaultScaleInterval
-	workerPoolDone := make(chan struct{})
-
-	return newTaskManager(
-		taskChan,
-		errorChan,
-		execTimeChan,
-		initialWorkerCount,
-		autoScaleInterval,
-		workerPoolDone,
-	)
+// WithChannelSize sets the channel buffer size for the TaskManager.
+func WithChannelSize(size int) TMOption {
+	return func(tm *TaskManager) {
+		tm.channelBufferSize = size
+	}
 }
 
-// NewCustom creates, starts and returns a new TaskManager using custom values for the task
-// manager parameters.
-func NewCustom(
-	initialWorkerCount int,
-	channelBufferSize int,
-	autoScaleInterval time.Duration,
-) *TaskManager {
-	taskChan := make(chan Task, channelBufferSize)
-	errorChan := make(chan error, channelBufferSize)
-	execTimeChan := make(chan time.Duration, channelBufferSize)
-	workerPoolDone := make(chan struct{})
+// WithMinWorkerCount sets the minimum number of workers for the TaskManager.
+func WithMinWorkerCount(count int) TMOption {
+	return func(tm *TaskManager) {
+		tm.minWorkerCount = count
+	}
+}
 
-	return newTaskManager(
-		taskChan,
-		errorChan,
-		execTimeChan,
-		initialWorkerCount,
-		autoScaleInterval,
-		workerPoolDone,
-	)
+// WithScaleInterval sets the interval at which the worker pool is scaled for the TaskManager.
+func WithScaleInterval(interval time.Duration) TMOption {
+	return func(tm *TaskManager) {
+		tm.scaleInterval = interval
+	}
 }
