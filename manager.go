@@ -62,33 +62,6 @@ type TaskManager struct {
 	scaleInterval  time.Duration // Interval for automatic scaling of the worker pool
 }
 
-// Task is an interface for tasks that can be executed.
-type Task interface {
-	Execute() error
-}
-
-// SimpleTask is a task that executes a function.
-type SimpleTask struct {
-	function func() error
-}
-
-// Execute executes the function and returns the error.
-func (st SimpleTask) Execute() error {
-	err := st.function()
-	return err
-}
-
-// Job is a container for a group of tasks, with a unique ID and a cadence for scheduling.
-type Job struct {
-	Cadence time.Duration // Time between executions of the job
-	Tasks   []Task        // Tasks in the job
-
-	ID       string    // Unique ID for the job
-	NextExec time.Time // The next time the job should be executed
-
-	index int // Index within the heap
-}
-
 // ErrorChannel returns a read-only channel for reading errors from task execution.
 func (tm *TaskManager) ErrorChannel() <-chan error {
 	return tm.errorChan
@@ -121,7 +94,7 @@ func (tm *TaskManager) Metrics() TaskManagerMetrics {
 // ScheduleFunc takes a function and adds it to the TaskManager in a Job. Creates and returns a
 // randomized ID, used to identify the Job within the task manager.
 func (tm *TaskManager) ScheduleFunc(function func() error, cadence time.Duration) (string, error) {
-	task := SimpleTask{function}
+	task := simpleTask{function}
 	jobID := xid.New().String()
 
 	job := Job{
