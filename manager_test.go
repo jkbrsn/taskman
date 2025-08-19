@@ -18,7 +18,8 @@ import (
 )
 
 var (
-	testLogLevel = zerolog.InfoLevel
+	testLogLevel = zerolog.Disabled
+	testLogger   = zerolog.New(zerolog.NewTestWriter(nil)).Level(testLogLevel)
 )
 
 type MockTask struct {
@@ -29,7 +30,7 @@ type MockTask struct {
 }
 
 func (mt MockTask) Execute() error {
-	logger.Debug().Msgf("Executing MockTask with ID: %s", mt.ID)
+	testLogger.Debug().Msgf("Executing MockTask with ID: %s", mt.ID)
 	if mt.executeFunc != nil {
 		err := mt.executeFunc()
 		if err != nil {
@@ -320,7 +321,7 @@ func TestTaskExecution(t *testing.T) {
 		ID:      "test-execution-task",
 		cadence: 100 * time.Millisecond,
 		executeFunc: func() error {
-			logger.Debug().Msg("Executing TestTaskExecution task")
+			testLogger.Debug().Msg("Executing TestTaskExecution task")
 			executionTimes <- time.Now()
 			wg.Done()
 			return nil
@@ -486,9 +487,6 @@ func TestScheduleTaskDuringExecution(t *testing.T) {
 }
 
 func TestConcurrentScheduleTask(t *testing.T) {
-	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel)
-	// causes a race condition due to the logger being shared across tests
-
 	manager := New(
 		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
@@ -522,11 +520,10 @@ func TestConcurrentScheduleTask(t *testing.T) {
 }
 
 func TestConcurrentScheduleJob(t *testing.T) {
-	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel)
-	// causes a race condition due to the logger being shared across tests
-
 	manager := New(
-		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+		WithMinWorkerCount(10),
+		WithChannelSize(1),
+		WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -558,7 +555,9 @@ func TestConcurrentScheduleJob(t *testing.T) {
 
 func TestZeroCadenceTask(t *testing.T) {
 	manager := New(
-		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+		WithMinWorkerCount(10),
+		WithChannelSize(1),
+		WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	testChan := make(chan bool)
@@ -576,13 +575,15 @@ func TestZeroCadenceTask(t *testing.T) {
 		t.Fatal("Task with zero cadence should not execute")
 	case <-time.After(50 * time.Millisecond):
 		// After 50ms, the task would have executed if it was scheduled
-		logger.Debug().Msg("Task with zero cadence never executed")
+		testLogger.Debug().Msg("Task with zero cadence never executed")
 	}
 }
 
 func TestErrorChannelConsumption(t *testing.T) {
 	manager := New(
-		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+		WithMinWorkerCount(10),
+		WithChannelSize(2),
+		WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	// Send error to the error channel before attempting to consume it
@@ -620,7 +621,9 @@ Loop:
 func TestManagerMetrics(t *testing.T) {
 	workerCount := 2
 	manager := New(
-		WithMinWorkerCount(workerCount), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+		WithMinWorkerCount(workerCount),
+		WithChannelSize(2),
+		WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	executionTime := 25 * time.Millisecond
@@ -718,7 +721,9 @@ func TestManagerMetrics(t *testing.T) {
 func TestWorkerPoolScaling(t *testing.T) {
 	// Start a manager with 1 worker
 	manager := New(
-		WithMinWorkerCount(1), WithChannelSize(4), WithScaleInterval(1*time.Minute))
+		WithMinWorkerCount(1),
+		WithChannelSize(4),
+		WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	// The first two test cases sets cadences and task execution duration to values
@@ -731,11 +736,11 @@ func TestWorkerPoolScaling(t *testing.T) {
 			Cadence:  5 * time.Millisecond,
 			NextExec: time.Now().Add(20 * time.Millisecond),
 			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
-				logger.Debug().Msg("Executing task1")
+				testLogger.Debug().Msg("Executing task1")
 				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 				return nil
 			}}, MockTask{ID: "task2", executeFunc: func() error {
-				logger.Debug().Msg("Executing task2")
+				testLogger.Debug().Msg("Executing task2")
 				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 				return nil
 			}}},
@@ -760,7 +765,7 @@ func TestWorkerPoolScaling(t *testing.T) {
 			Cadence:  5 * time.Millisecond, // Set a low cadence to force scaling up
 			NextExec: time.Now().Add(10 * time.Millisecond),
 			Tasks: []Task{MockTask{ID: "task3", executeFunc: func() error {
-				logger.Debug().Msg("Executing task3")
+				testLogger.Debug().Msg("Executing task3")
 				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 				return nil
 			}}},
@@ -821,7 +826,9 @@ func TestWorkerPoolScaling(t *testing.T) {
 
 	t.Run("ScaleDown", func(t *testing.T) {
 		manager := New(
-			WithMinWorkerCount(1), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+			WithMinWorkerCount(1),
+			WithChannelSize(1),
+			WithScaleInterval(1*time.Minute))
 		defer manager.Stop()
 
 		job := Job{
@@ -829,11 +836,11 @@ func TestWorkerPoolScaling(t *testing.T) {
 			Cadence:  5 * time.Millisecond,
 			NextExec: time.Now().Add(20 * time.Millisecond),
 			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
-				logger.Debug().Msg("Executing task1")
+				testLogger.Debug().Msg("Executing task1")
 				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 				return nil
 			}}, MockTask{ID: "task2", executeFunc: func() error {
-				logger.Debug().Msg("Executing task2")
+				testLogger.Debug().Msg("Executing task2")
 				time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 				return nil
 			}}},
@@ -868,7 +875,9 @@ func TestWorkerPoolScaling(t *testing.T) {
 
 	t.Run("ScaleUpRespectsMaxWorkerCount", func(t *testing.T) {
 		manager := New(
-			WithMinWorkerCount(1), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+			WithMinWorkerCount(1),
+			WithChannelSize(1),
+			WithScaleInterval(1*time.Minute))
 		defer manager.Stop()
 
 		// Create a job that would require more workers than maxWorkerCount
@@ -915,7 +924,9 @@ func TestWorkerPoolScaling(t *testing.T) {
 
 	t.Run("RemoveAllJobs", func(t *testing.T) {
 		manager := New(
-			WithMinWorkerCount(1), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+			WithMinWorkerCount(1),
+			WithChannelSize(1),
+			WithScaleInterval(1*time.Minute))
 		defer manager.Stop()
 
 		job := Job{
@@ -963,7 +974,7 @@ func TestWorkerPoolPeriodicScaling(t *testing.T) {
 		Cadence:  5 * time.Millisecond,
 		NextExec: time.Now().Add(20 * time.Millisecond),
 		Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
-			logger.Debug().Msg("Executing task1")
+			testLogger.Debug().Msg("Executing task1")
 			time.Sleep(20 * time.Millisecond) // Simulate 20 ms execution time
 			return nil
 		}}},

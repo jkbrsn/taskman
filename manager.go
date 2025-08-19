@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -22,21 +21,6 @@ const (
 	defaultBufferSize    = 64
 )
 
-var (
-	// Package-level logger that defaults to a no-op logger
-	logger = zerolog.New(zerolog.NewTestWriter(nil)).Level(zerolog.Disabled)
-)
-
-// SetLogger allows users to inject their own logger for the entire package
-func SetLogger(l zerolog.Logger) {
-	logger = l
-}
-
-// InitDefaultLogger initializes the package logger with default settings
-func InitDefaultLogger() {
-	logger = zerolog.New(os.Stdout).With().Timestamp().Logger().Level(zerolog.InfoLevel)
-}
-
 // TMOption is a functional option for the TaskManager struct.
 type TMOption func(*TaskManager)
 
@@ -44,6 +28,8 @@ type TMOption func(*TaskManager)
 // manager dispatches scheduled jobs to a worker pool for execution.
 type TaskManager struct {
 	sync.RWMutex
+
+	log zerolog.Logger
 
 	// Queue
 	jobQueue   priorityQueue // A priority queue to hold the scheduled jobs
@@ -117,7 +103,7 @@ func (tm *TaskManager) run() {
 			now := time.Now()
 			delay := nextJob.NextExec.Sub(now)
 			if delay <= 0 {
-				logger.Trace().Msgf("Dispatching job %s", nextJob.ID)
+				tm.log.Trace().Msgf("Dispatching job %s", nextJob.ID)
 				tasks := nextJob.Tasks
 				tm.Unlock()
 
@@ -163,7 +149,7 @@ func (tm *TaskManager) run() {
 // - The average execution time and concurrency of tasks
 // - The number of tasks in the latest job related to available workers at the moment
 func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
-	logger.Debug().Msgf(
+	tm.log.Debug().Msgf(
 		"Scaling workers, available/running: %d/%d",
 		tm.workerPool.availableWorkers(), tm.workerPool.runningWorkers(),
 	)
@@ -212,7 +198,7 @@ func (tm *TaskManager) scaleWorkerPool(workersNeededNow int) {
 
 	// Adjust the worker pool size
 	tm.workerPool.enqueueWorkerScaling(workersNeeded)
-	logger.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
+	tm.log.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
 }
 
 // start initializes metrics, creates the job queue and the channels, sets up the worker pool, and
@@ -236,6 +222,7 @@ func (tm *TaskManager) start() {
 
 	// Worker pool
 	tm.workerPool = newWorkerPool(
+		tm.log, // Pass on logger instance
 		tm.minWorkerCount,
 		tm.errorChan,
 		make(chan time.Duration, tm.channelBufferSize),
@@ -314,7 +301,7 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 		return fmt.Errorf("invalid job: %w", err)
 	}
 
-	logger.Debug().Msgf(
+	tm.log.Debug().Msgf(
 		"Scheduling job with %d tasks with ID '%s' and cadence %v",
 		len(job.Tasks), job.ID, job.Cadence,
 	)
@@ -346,7 +333,7 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 	default:
 		select {
 		case tm.newJobChan <- true:
-			logger.Trace().Msg("Signaled new job added")
+			tm.log.Trace().Msg("Signaled new job added")
 		default:
 			// Do nothing if no one is listening
 		}
@@ -471,13 +458,14 @@ func (tm *TaskManager) Stop() {
 		close(tm.errorChan)
 		close(tm.taskChan)
 
-		logger.Debug().Msg("TaskManager stopped")
+		tm.log.Debug().Msg("TaskManager stopped")
 	})
 }
 
 // setDefaultOptions sets default values for the options of the TaskManager.
 func setDefaultOptions(tm *TaskManager) {
 	tm.channelBufferSize = defaultBufferSize
+	tm.log = zerolog.New(zerolog.Nop())
 	tm.minWorkerCount = runtime.NumCPU()
 	tm.scaleInterval = defaultScaleInterval
 }
@@ -492,24 +480,32 @@ func New(opts ...TMOption) *TaskManager {
 	}
 
 	setDefaultOptions(tm)
-
 	for _, opt := range opts {
 		opt(tm)
 	}
 
+	tm.log = tm.log.With().Str("pkg", "taskman").Logger()
 	tm.start()
 
 	return tm
 }
 
-// WithChannelSize sets the channel buffer size for the TaskManager.
+// WithChannelSize sets the channel buffer size for the TaskManager. The default is 64.
 func WithChannelSize(size int) TMOption {
 	return func(tm *TaskManager) {
 		tm.channelBufferSize = size
 	}
 }
 
-// WithMinWorkerCount sets the minimum number of workers for the TaskManager.
+// WithLogger sets the logger for the TaskManager. The default is a no-op logger.
+func WithLogger(logger zerolog.Logger) TMOption {
+	return func(tm *TaskManager) {
+		tm.log = logger
+	}
+}
+
+// WithMinWorkerCount sets the minimum number of workers for the TaskManager. The default is the
+// number of CPU cores found on the system at runtime.
 func WithMinWorkerCount(count int) TMOption {
 	return func(tm *TaskManager) {
 		tm.minWorkerCount = count
@@ -517,6 +513,7 @@ func WithMinWorkerCount(count int) TMOption {
 }
 
 // WithScaleInterval sets the interval at which the worker pool is scaled for the TaskManager.
+// The default is 1 minute.
 func WithScaleInterval(interval time.Duration) TMOption {
 	return func(tm *TaskManager) {
 		tm.scaleInterval = interval
