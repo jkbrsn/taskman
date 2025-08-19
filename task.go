@@ -1,7 +1,10 @@
 // Package taskman provides a simple task scheduler with a worker pool.
 package taskman
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // Task is an interface for tasks that can be executed.
 type Task interface {
@@ -28,4 +31,22 @@ type Job struct {
 	NextExec time.Time // The next time the job should be executed
 
 	index int // Index within the heap
+}
+
+// Validate validates the job.
+func (j *Job) Validate() error {
+	// Jobs with cadence <= 0 would execute immediately and continuously.
+	if j.Cadence <= 0 {
+		return errors.New("invalid cadence, must be greater than 0")
+	}
+	// Jobs with no tasks would not do anything.
+	if len(j.Tasks) == 0 {
+		return errors.New("job has no tasks")
+	}
+	// Jobs with a NextExec time more than one Cadence old would re-execute continually.
+	if j.NextExec.Before(time.Now().Add(-j.Cadence)) {
+		return errors.New("job NextExec is too early")
+	}
+
+	return nil
 }

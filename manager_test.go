@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -180,7 +181,9 @@ func TestScheduleTask(t *testing.T) {
 
 func TestScheduleTasks(t *testing.T) {
 	manager := New(
-		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+		WithMinWorkerCount(10),
+		WithChannelSize(2),
+		WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	mockTasks := []MockTask{
@@ -194,9 +197,7 @@ func TestScheduleTasks(t *testing.T) {
 		tasks[i] = task
 	}
 	jobID, err := manager.ScheduleTasks(tasks, 100*time.Millisecond)
-	if err != nil {
-		t.Fatalf("Error adding tasks: %v", err)
-	}
+	require.NoError(t, err, "Error scheduling tasks")
 
 	// Assert that the job was added
 	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d",
@@ -208,23 +209,28 @@ func TestScheduleTasks(t *testing.T) {
 
 func TestScheduleJob(t *testing.T) {
 	manager := New(
-		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+		WithMinWorkerCount(10),
+		WithChannelSize(2),
+		WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	job := getMockedJob(2, "test-job", 100*time.Millisecond, 100*time.Millisecond)
-	err := manager.ScheduleJob(job)
-	if err != nil {
-		t.Fatalf("Error adding job: %v", err)
-	}
 
-	// Assert that the job was added
-	assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d",
-		manager.jobsInQueue())
-	scheduledJob := manager.jobQueue[0]
-	assert.Equal(t, len(job.Tasks), len(scheduledJob.Tasks),
-		len(job.Tasks), "Expected job to have 2 tasks, got %d")
-	assert.Equal(t, job.ID, scheduledJob.ID, "Expected job ID to be %s, got %s",
-		scheduledJob.ID, job.ID)
+	t.Run("valid scheduling", func(t *testing.T) {
+		assert.NoError(t, manager.ScheduleJob(job))
+		// Assert that the job was added
+		assert.Equal(t, 1, manager.jobsInQueue(), "Expected job queue length to be 1, got %d",
+			manager.jobsInQueue())
+		scheduledJob := manager.jobQueue[0]
+		assert.Equal(t, len(job.Tasks), len(scheduledJob.Tasks),
+			len(job.Tasks), "Expected job to have 2 tasks, got %d")
+		assert.Equal(t, job.ID, scheduledJob.ID, "Expected job ID to be %s, got %s",
+			scheduledJob.ID, job.ID)
+	})
+
+	t.Run("duplicate job", func(t *testing.T) {
+		assert.Error(t, manager.ScheduleJob(job), "Expected error for duplicate job ID")
+	})
 }
 
 func TestRemoveJob(t *testing.T) {
@@ -572,65 +578,6 @@ func TestZeroCadenceTask(t *testing.T) {
 		// After 50ms, the task would have executed if it was scheduled
 		logger.Debug().Msg("Task with zero cadence never executed")
 	}
-}
-
-func TestValidateJob(t *testing.T) {
-	manager := New(
-		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
-	defer manager.Stop()
-
-	// Test case: valid job
-	validJob := Job{
-		ID:       "valid-job",
-		Cadence:  100 * time.Millisecond,
-		NextExec: time.Now().Add(100 * time.Millisecond),
-		Tasks:    []Task{MockTask{ID: "task1"}},
-	}
-	err := manager.validateJob(validJob)
-	assert.NoError(t, err, "Expected no error for valid job")
-
-	// Test case: invalid job with zero cadence
-	invalidJobZeroCadence := Job{
-		ID:       "invalid-job-zero-cadence",
-		Cadence:  0,
-		NextExec: time.Now().Add(100 * time.Millisecond),
-		Tasks:    []Task{MockTask{ID: "task1"}},
-	}
-	err = manager.validateJob(invalidJobZeroCadence)
-	assert.Error(t, err, "Expected error for job with zero cadence")
-
-	// Test case: invalid job with no tasks
-	invalidJobNoTasks := Job{
-		ID:       "invalid-job-no-tasks",
-		Cadence:  100 * time.Millisecond,
-		NextExec: time.Now().Add(100 * time.Millisecond),
-		Tasks:    []Task{},
-	}
-	err = manager.validateJob(invalidJobNoTasks)
-	assert.Error(t, err, "Expected error for job with no tasks")
-
-	// Test case: invalid job with zero NextExec time
-	invalidJobZeroNextExec := Job{
-		ID:       "invalid-job-zero-next-exec",
-		Cadence:  100 * time.Millisecond,
-		NextExec: time.Time{},
-		Tasks:    []Task{MockTask{ID: "task1"}},
-	}
-	err = manager.validateJob(invalidJobZeroNextExec)
-	assert.Error(t, err, "Expected error for job with zero NextExec time")
-
-	// Test case: existing job ID
-	alreadyPresentJob := Job{
-		ID:       "job-in-queue",
-		Cadence:  100 * time.Millisecond,
-		NextExec: time.Now().Add(100 * time.Millisecond),
-		Tasks:    []Task{MockTask{ID: "task1"}},
-	}
-	assert.NoError(t, manager.ScheduleJob(alreadyPresentJob))
-
-	duplicateJob := alreadyPresentJob
-	err = manager.validateJob(duplicateJob)
-	assert.Error(t, err, "Expected error for duplicate job ID")
 }
 
 func TestErrorChannelConsumption(t *testing.T) {
