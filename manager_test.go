@@ -84,7 +84,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestNewTaskManagerCustom(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	// Verify jobQueue is initialized
@@ -103,7 +104,8 @@ func TestNewTaskManagerCustom(t *testing.T) {
 
 func TestManagerStop(t *testing.T) {
 	// NewCustom starts the task manager
-	manager := New(WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
 
 	// Immediately stop the manager
 	manager.Stop()
@@ -134,7 +136,8 @@ func TestManagerStop(t *testing.T) {
 }
 
 func TestScheduleFunc(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	jobID, err := manager.ScheduleFunc(
@@ -156,7 +159,8 @@ func TestScheduleFunc(t *testing.T) {
 }
 
 func TestScheduleTask(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	testTask := MockTask{ID: "test-task", cadence: 100 * time.Millisecond}
@@ -175,7 +179,8 @@ func TestScheduleTask(t *testing.T) {
 }
 
 func TestScheduleTasks(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	mockTasks := []MockTask{
@@ -202,7 +207,8 @@ func TestScheduleTasks(t *testing.T) {
 }
 
 func TestScheduleJob(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	job := getMockedJob(2, "test-job", 100*time.Millisecond, 100*time.Millisecond)
@@ -222,7 +228,8 @@ func TestScheduleJob(t *testing.T) {
 }
 
 func TestRemoveJob(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	job := getMockedJob(2, "someJob", 100*time.Millisecond, 100*time.Millisecond)
@@ -250,7 +257,8 @@ func TestRemoveJob(t *testing.T) {
 }
 
 func TestReplaceJob(t *testing.T) {
-	manager := New(WithMinWorkerCount(4), WithChannelSize(4), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(4), WithChannelSize(4), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	// Add a job
@@ -291,7 +299,8 @@ func TestReplaceJob(t *testing.T) {
 }
 
 func TestTaskExecution(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -329,7 +338,8 @@ func TestTaskRescheduling(t *testing.T) {
 	// Make room in buffered channel for multiple errors (4), since we're not
 	// consuming them in this test and the error channel otherwise blocks the
 	// workers from executing tasks
-	manager := New(WithMinWorkerCount(10), WithChannelSize(4), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(4), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	var executionTimes []time.Time
@@ -372,7 +382,8 @@ func TestTaskRescheduling(t *testing.T) {
 }
 
 func TestScheduleTaskDuringExecution(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	// Dedicated channels for task execution signals
@@ -472,7 +483,8 @@ func TestConcurrentScheduleTask(t *testing.T) {
 	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel)
 	// causes a race condition due to the logger being shared across tests
 
-	manager := New(WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -507,7 +519,8 @@ func TestConcurrentScheduleJob(t *testing.T) {
 	// TODO: deactivate debug logs for this test? Using setLoggerLevel(zerolog.InfoLevel)
 	// causes a race condition due to the logger being shared across tests
 
-	manager := New(WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	var wg sync.WaitGroup
@@ -538,7 +551,8 @@ func TestConcurrentScheduleJob(t *testing.T) {
 }
 
 func TestZeroCadenceTask(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	testChan := make(chan bool)
@@ -561,7 +575,8 @@ func TestZeroCadenceTask(t *testing.T) {
 }
 
 func TestValidateJob(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	// Test case: valid job
@@ -619,7 +634,8 @@ func TestValidateJob(t *testing.T) {
 }
 
 func TestErrorChannelConsumption(t *testing.T) {
-	manager := New(WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(10), WithChannelSize(2), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	// Send error to the error channel before attempting to consume it
@@ -656,7 +672,8 @@ Loop:
 
 func TestManagerMetrics(t *testing.T) {
 	workerCount := 2
-	manager := New(WithMinWorkerCount(workerCount), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(workerCount), WithChannelSize(2), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	executionTime := 25 * time.Millisecond
@@ -753,7 +770,8 @@ func TestManagerMetrics(t *testing.T) {
 
 func TestWorkerPoolScaling(t *testing.T) {
 	// Start a manager with 1 worker
-	manager := New(WithMinWorkerCount(1), WithChannelSize(4), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(1), WithChannelSize(4), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	// The first two test cases sets cadences and task execution duration to values
@@ -855,7 +873,8 @@ func TestWorkerPoolScaling(t *testing.T) {
 	})
 
 	t.Run("ScaleDown", func(t *testing.T) {
-		manager := New(WithMinWorkerCount(1), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+		manager := New(
+			WithMinWorkerCount(1), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 		defer manager.Stop()
 
 		job := Job{
@@ -901,7 +920,8 @@ func TestWorkerPoolScaling(t *testing.T) {
 	})
 
 	t.Run("ScaleUpRespectsMaxWorkerCount", func(t *testing.T) {
-		manager := New(WithMinWorkerCount(1), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+		manager := New(
+			WithMinWorkerCount(1), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 		defer manager.Stop()
 
 		// Create a job that would require more workers than maxWorkerCount
@@ -947,7 +967,8 @@ func TestWorkerPoolScaling(t *testing.T) {
 	})
 
 	t.Run("RemoveAllJobs", func(t *testing.T) {
-		manager := New(WithMinWorkerCount(1), WithChannelSize(1), WithScaleInterval(1*time.Minute))
+		manager := New(
+			WithMinWorkerCount(1), WithChannelSize(1), WithScaleInterval(1*time.Minute))
 		defer manager.Stop()
 
 		job := Job{
@@ -984,7 +1005,8 @@ func TestWorkerPoolScaling(t *testing.T) {
 func TestWorkerPoolPeriodicScaling(t *testing.T) {
 	// Start a manager with 1 worker, and a scaling interval of 40ms. The scaling interval is set
 	// to occur after the first job has executed at least once.
-	manager := New(WithMinWorkerCount(1), WithChannelSize(4), WithScaleInterval(50*time.Millisecond))
+	manager := New(
+		WithMinWorkerCount(1), WithChannelSize(4), WithScaleInterval(50*time.Millisecond))
 	defer manager.Stop()
 
 	// Add a job with 4 x longer execution than cadence, resulting in at least 4 workers being
@@ -1021,7 +1043,8 @@ func TestWorkerPoolPeriodicScaling(t *testing.T) {
 }
 
 func TestTaskExecutionAt(t *testing.T) {
-	manager := New(WithMinWorkerCount(1), WithChannelSize(2), WithScaleInterval(1*time.Minute))
+	manager := New(
+		WithMinWorkerCount(1), WithChannelSize(2), WithScaleInterval(1*time.Minute))
 	defer manager.Stop()
 
 	t.Run("With NextExec as time.Now()", func(t *testing.T) {
@@ -1120,7 +1143,11 @@ func TestGoroutineLeak(t *testing.T) {
 	initialGoroutines := runtime.NumGoroutine()
 
 	// Create a manager with periodic scaling
-	manager := New(WithMinWorkerCount(1), WithChannelSize(4), WithScaleInterval(10*time.Millisecond))
+	manager := New(
+		WithMinWorkerCount(1),
+		WithChannelSize(4),
+		WithScaleInterval(10*time.Millisecond),
+	)
 	defer manager.Stop()
 
 	// Schedule a job that runs for a while
