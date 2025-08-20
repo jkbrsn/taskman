@@ -36,17 +36,17 @@ defer manager.Stop()
 
 jobID, err := manager.ScheduleFunc(
     func() error {
-        log.Printf("Executing the function")
+        fmt.Println("Executing the function")
         return nil
     },
     10 * time.Second,
 )
-// Handle the err and do something with the job ID
+// Handle the error and do something with the job ID
 ```
 
 ### Advanced usage
 
-Full usage of the package involves implementing the `Task` interface, and adding tasks to the manager in a `Job`.
+Full usage of the package involves implementing the `Task` interface, adding tasks to the manager in a `Job`, and tweaking the manager parameters to your liking using the functional options.
 
 ```go
 // Make an arbitrary struct implement the Task interface
@@ -55,14 +55,17 @@ type SomeStruct struct {
 }
 
 func (s SomeStruct) Execute() error {
-	log.Printf("Executing SomeStruct with ID: %s", s.ID)
+	fmt.Printf("Executing SomeStruct with ID: %s", s.ID)
 	return nil
 }
 
 ...
 
 // Utilize the implementation when adding a Job
-manager := New()
+manager := New(
+  WithMinWorkerCount(4),
+  WithChannelSize(16),
+)
 defer manager.Stop()
 
 // A job with two tasks and a cadence of 10 seconds, set to have its first execution immediately
@@ -77,20 +80,20 @@ job := Job{
 }
 
 err := manager.ScheduleJob(job)
-// Handle the err
+// Handle the error
 ```
 
 ### Logging
 
-The package uses `zerolog` for logging. Without any action, the package will initialize a no-op logger. A custom logger can be set using the `SetLogger` function, or the `InitDefaultLogger` function can be called to initialize a default logger set to `InfoLevel`.
+The package uses `zerolog` for logging purposes. By default, the package will initialize a no-op logger, but if logging from the task manager is desired the `WithLogger` option can be used to set a custom logger at construction.
 
 ```go
 // Set a custom logger
-logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
-taskman.SetLogger(logger)
-
-// Initialize the default logger
-taskman.InitDefaultLogger()
+manager := New(
+    WithLogger(
+        zerolog.New(os.Stdout).With().Timestamp().Logger(),
+    ),
+)
 ```
 
 ## Contributing
