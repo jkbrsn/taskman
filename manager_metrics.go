@@ -21,11 +21,7 @@ type TaskManagerMetrics struct {
 	TasksPerSecond       float32       // Number of tasks executed per second
 
 	// Worker pool
-	WorkerCountTarget   int     // Target number of workers
-	WorkerScalingEvents int     // Number of worker scaling events since start
-	WorkerUtilization   float32 // Utilization of workers
-	WorkersActive       int     // Number of active workers
-	WorkersRunning      int     // Number of running workers
+	PoolMetrics *PoolMetrics
 
 	// TODO: consider adding:
 	// JobSuccessRate
@@ -36,6 +32,15 @@ type TaskManagerMetrics struct {
 	// TaskQueueWait
 	// TaskBacklogLength
 	// WorkerAverageLifetime
+}
+
+// PoolMetrics stores metrics about the worker pool.
+type PoolMetrics struct {
+	WorkerCountTarget   int     // Target number of workers
+	WorkerScalingEvents int     // Number of worker scaling events since start
+	WorkerUtilization   float32 // Utilization of workers
+	WorkersActive       int     // Number of active workers
+	WorkersRunning      int     // Number of running workers
 }
 
 // managerMetrics stores internal metrics about the task manager.
