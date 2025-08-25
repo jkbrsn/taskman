@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// poolExecutor is an implementation of executor that uses a worker pool to execute tasks.
 type poolExecutor struct {
 	mu  sync.RWMutex
 	log zerolog.Logger
@@ -187,6 +188,7 @@ func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 	e.log.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
 }
 
+// Metrics returns the metrics for the executor.
 func (e *poolExecutor) Metrics() *PoolMetrics {
 	return &PoolMetrics{
 		WorkerCountTarget:   int(e.workerPool.workerCountTarget.Load()),
@@ -197,6 +199,7 @@ func (e *poolExecutor) Metrics() *PoolMetrics {
 	}
 }
 
+// Remove removes a job from the queue.
 func (e *poolExecutor) Remove(jobID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -241,6 +244,7 @@ func (e *poolExecutor) Remove(jobID string) error {
 	return nil
 }
 
+// Replace replaces a job in the queue.
 func (e *poolExecutor) Replace(job Job) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -259,6 +263,7 @@ func (e *poolExecutor) Replace(job Job) error {
 	return nil
 }
 
+// Schedule schedules a job for execution.
 func (e *poolExecutor) Schedule(job Job) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -312,6 +317,7 @@ func (e *poolExecutor) Schedule(job Job) error {
 	return nil
 }
 
+// Start starts the executor by setting up the job queue, channels, and worker pool.
 func (e *poolExecutor) Start() {
 	// Metrics: reuse provided metrics and set done channel
 	if e.metrics == nil {
@@ -348,6 +354,8 @@ func (e *poolExecutor) Start() {
 	go e.periodicWorkerScaling()
 }
 
+// Stop signals the executor to stop processing tasks and exit. The executor will block until the
+// run loop has exited, and the worker pool has stopped.
 func (e *poolExecutor) Stop() {
 	e.stopOnce.Do(func() {
 		e.cancel()
@@ -367,6 +375,7 @@ func (e *poolExecutor) Stop() {
 	})
 }
 
+// newPoolExecutor creates a new pool executor.
 func newPoolExecutor(
 	parentCtx context.Context,
 	logger zerolog.Logger,
