@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -15,19 +16,19 @@ import (
 
 // poolExecutor is an implementation of executor that uses a worker pool to execute tasks.
 type poolExecutor struct {
-	mu  sync.RWMutex
 	log zerolog.Logger
 
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	// Queue
+	mu         sync.RWMutex
 	jobQueue   priorityQueue // A priority queue to hold the scheduled jobs
 	newJobChan chan bool     // Channel to signal that new tasks have entered the queue
 
-	// Context and operations
-	ctx      context.Context
-	cancel   context.CancelFunc
-	metrics  *managerMetrics // Metrics for the overall task manager
-	runDone  chan struct{}   // Channel to signal run has stopped
-	stopOnce sync.Once       // Ensures Stop is only called once
+	// Operations
+	runDone  chan struct{} // Channel to signal run has stopped
+	stopOnce sync.Once     // Ensures Stop is only called once
 
 	// Worker pool
 	workerPool     *workerPool
@@ -39,14 +40,10 @@ type poolExecutor struct {
 	channelBufferSize int           // Buffer size for task channels
 	minWorkerCount    int           // Minimum number of workers in the pool
 	scaleInterval     time.Duration // Interval for automatic scaling of the worker pool
-}
 
-// jobsInQueue returns the length of the jobQueue slice.
-func (e *poolExecutor) jobsInQueue() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	return e.jobQueue.Len()
+	// Metrics
+	metrics     *managerMetrics // Metrics for the overall task manager
+	maxJobWidth atomic.Int32    // Widest job in the queue in terms of number of tasks
 }
 
 // periodicWorkerScaling scales the worker pool at regular intervals, based on the state of the
@@ -144,7 +141,7 @@ func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 	bufferFactor100 := 2.0
 
 	// Calculate the number of workers needed based on the widest job
-	workersNeededParallelTasks := e.metrics.maxJobWidth.Load()
+	workersNeededParallelTasks := e.maxJobWidth.Load()
 	// Apply the larger buffer factor for parallel tasks, as this is a low predictability metric
 	workersNeededParallelTasks = int32(
 		math.Ceil(float64(workersNeededParallelTasks) * bufferFactor100),
@@ -189,13 +186,21 @@ func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 }
 
 // Metrics returns the metrics for the executor.
-func (e *poolExecutor) Metrics() *PoolMetrics {
-	return &PoolMetrics{
-		WorkerCountTarget:   int(e.workerPool.workerCountTarget.Load()),
-		WorkerScalingEvents: int(e.workerPool.workerScalingEvents.Load()),
-		WorkerUtilization:   float32(e.workerPool.utilization()),
-		WorkersActive:       int(e.workerPool.workersActive.Load()),
-		WorkersRunning:      int(e.workerPool.workersRunning.Load()),
+func (e *poolExecutor) Metrics() TaskManagerMetrics {
+	return TaskManagerMetrics{
+		ManagedJobs:          int(e.metrics.jobsManaged.Load()),
+		ManagedTasks:         int(e.metrics.tasksManaged.Load()),
+		TaskAverageExecTime:  time.Duration(e.metrics.averageExecTime.Load()),
+		TasksTotalExecutions: int(e.metrics.totalTaskExecutions.Load()),
+		TasksPerSecond:       e.metrics.tasksPerSecond.Load(),
+		PoolMetrics: &PoolMetrics{
+			WidestJobWidth:      int(e.maxJobWidth.Load()),
+			WorkerCountTarget:   int(e.workerPool.workerCountTarget.Load()),
+			WorkerScalingEvents: int(e.workerPool.workerScalingEvents.Load()),
+			WorkerUtilization:   float32(e.workerPool.utilization()),
+			WorkersActive:       int(e.workerPool.workersActive.Load()),
+			WorkersRunning:      int(e.workerPool.workersRunning.Load()),
+		},
 	}
 }
 
@@ -220,7 +225,7 @@ func (e *poolExecutor) Remove(jobID string) error {
 	// Update task metrics
 	newWidestJob := 0
 	taskCount := len(job.Tasks)
-	if taskCount == int(e.metrics.maxJobWidth.Load()) {
+	if taskCount == int(e.maxJobWidth.Load()) {
 		// If the removed job is widest, find the second widest job in the queue
 		for _, j := range e.jobQueue {
 			// If another job has the same number of tasks, keep the widest job at the same value
@@ -233,10 +238,10 @@ func (e *poolExecutor) Remove(jobID string) error {
 				newWidestJob = len(j.Tasks)
 			}
 		}
-		e.metrics.maxJobWidth.Store(int32(newWidestJob))
+		e.maxJobWidth.Store(int32(newWidestJob))
 	}
 	// Update the task metrics with a negative task count to signify removal
-	e.metrics.updateTaskMetrics(-taskCount, job.Cadence)
+	e.metrics.updateTaskMetrics(-1, -taskCount, job.Cadence)
 
 	// Scale worker pool if needed
 	e.scaleWorkerPool(0)
@@ -292,7 +297,10 @@ func (e *poolExecutor) Schedule(job Job) error {
 
 	// Update task metrics
 	taskCount := len(job.Tasks)
-	e.metrics.updateTaskMetrics(taskCount, job.Cadence)
+	if taskCount > int(e.maxJobWidth.Load()) {
+		e.maxJobWidth.Store(int32(taskCount))
+	}
+	e.metrics.updateTaskMetrics(1, taskCount, job.Cadence)
 
 	// Scale worker pool if needed
 	e.scaleWorkerPool(taskCount)
@@ -387,6 +395,7 @@ func newPoolExecutor(
 ) *poolExecutor {
 	ctx, cancel := context.WithCancel(parentCtx)
 	log := logger.With().Str("component", "executor").Logger()
+
 	return &poolExecutor{
 		ctx:               ctx,
 		cancel:            cancel,

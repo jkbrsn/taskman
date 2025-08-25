@@ -8,5 +8,5 @@ type executor interface {
 	Schedule(job Job) error
 	Remove(jobID string) error
 	Replace(job Job) error
-	// TODO: add metrics function
+	Metrics() TaskManagerMetrics
 }

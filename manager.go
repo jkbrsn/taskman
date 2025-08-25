@@ -15,14 +15,18 @@ const (
 	maxWorkerCount       = 4096
 	defaultScaleInterval = 1 * time.Minute
 	defaultBufferSize    = 64
+
+	defaultCatchUpMax = 1
+	defaultParallel   = true
+	defaultMaxPar     = 0
 )
 
 // ExecMode configures how tasks are executed.
-// ModePool executes tasks using a shared worker pool; ModePerJob (not yet implemented)
-// would execute tasks per job.
+// ModePool executes tasks using a shared worker pool; ModeDistributed executes tasks per job with
+// each job running as its own worker.
 const (
 	ModePool ExecMode = iota
-	ModePerJob
+	ModeDistributed
 )
 
 // ExecMode is the execution mode for TaskManager.
@@ -53,9 +57,16 @@ type TaskManager struct {
 	stopOnce sync.Once // Ensures Stop is only called once
 
 	// Options
-	channelBufferSize int           // Buffer size for task channels
-	minWorkerCount    int           // Minimum number of workers in the pool
-	scaleInterval     time.Duration // Interval for automatic scaling of the worker pool
+	channelBufferSize int // Buffer size for task channels
+
+	// Distributed executor options
+	deCatchUpMax int
+	deParallel   bool
+	deMaxPar     int
+
+	// Pool executor options
+	peMinWorkerCount int           // Minimum number of workers in the pool
+	peScaleInterval  time.Duration // Interval for automatic scaling of the worker pool
 }
 
 // ErrorChannel returns a read-only channel for reading errors from task execution.
@@ -65,30 +76,7 @@ func (tm *TaskManager) ErrorChannel() <-chan error {
 
 // Metrics returns a snapshot of the task manager's metrics.
 func (tm *TaskManager) Metrics() TaskManagerMetrics {
-	tm.RLock()
-	defer tm.RUnlock()
-
-	metrics := TaskManagerMetrics{
-		QueuedTasks:          int(tm.metrics.tasksInQueue.Load()),
-		QueueMaxJobWidth:     int(tm.metrics.maxJobWidth.Load()),
-		TaskAverageExecTime:  tm.metrics.averageExecTime.Load(),
-		TasksTotalExecutions: int(tm.metrics.totalTaskExecutions.Load()),
-		TasksPerSecond:       tm.metrics.tasksPerSecond.Load(),
-	}
-
-	// Get pool metrics if in pool mode
-	// TODO: can this be done better?
-	if tm.execMode == ModePool {
-		poolExecutor, ok := tm.exec.(*poolExecutor)
-		if !ok {
-			return metrics
-		}
-		// TODO: unify approach with other execution modes
-		metrics.QueuedJobs = poolExecutor.jobsInQueue()
-		metrics.PoolMetrics = poolExecutor.Metrics()
-	}
-
-	return metrics
+	return tm.exec.Metrics()
 }
 
 // ScheduleFunc takes a function and adds it to the TaskManager in a Job. Creates and returns a
@@ -177,10 +165,15 @@ func (tm *TaskManager) Stop() {
 
 // setDefaultOptions sets default values for the options of the TaskManager.
 func setDefaultOptions(tm *TaskManager) {
-	tm.channelBufferSize = defaultBufferSize
 	tm.log = zerolog.New(zerolog.Nop())
-	tm.minWorkerCount = runtime.NumCPU()
-	tm.scaleInterval = defaultScaleInterval
+	tm.channelBufferSize = defaultBufferSize
+
+	tm.peMinWorkerCount = runtime.NumCPU()
+	tm.peScaleInterval = defaultScaleInterval
+
+	tm.deCatchUpMax = defaultCatchUpMax
+	tm.deParallel = defaultParallel
+	tm.deMaxPar = defaultMaxPar
 }
 
 // New creates, initializes, starts and returns a new TaskManager. It uses default values for
@@ -196,15 +189,30 @@ func New(opts ...TMOption) *TaskManager {
 		opt(tm)
 	}
 
+	// Defaults for distributed executor options
+	if tm.deCatchUpMax == 0 {
+		tm.deCatchUpMax = 1
+	}
+	// default parallel true; zero-value is false, so set if untouched
+	if !tm.deParallel {
+		tm.deParallel = true
+	}
+	// deMaxPar: 0 means unlimited; keep as zero unless explicitly set
+
 	tm.errorChan = make(chan error, tm.channelBufferSize)
 	tm.metrics = &managerMetrics{}
 
 	switch tm.execMode {
-	// TODO: enable when implemented
-	/* case ModePerJob:
-	tm.exec = &jobExecutor{
-		log: tm.log,
-		} */
+	case ModeDistributed:
+		tm.exec = newDistributedExecutor(
+			tm.ctx,
+			tm.log,
+			tm.errorChan,
+			tm.metrics,
+			tm.deCatchUpMax,
+			tm.deParallel,
+			tm.deMaxPar,
+		)
 	case ModePool:
 		// Intentionally fall through as ModePool is the default
 		fallthrough
@@ -215,8 +223,8 @@ func New(opts ...TMOption) *TaskManager {
 			tm.errorChan,
 			tm.metrics,
 			tm.channelBufferSize,
-			tm.minWorkerCount,
-			tm.scaleInterval)
+			tm.peMinWorkerCount,
+			tm.peScaleInterval)
 	}
 
 	tm.log = tm.log.With().Str("pkg", "taskman").Logger()
@@ -227,30 +235,40 @@ func New(opts ...TMOption) *TaskManager {
 
 // WithChannelSize sets the channel buffer size for the TaskManager. The default is 64.
 func WithChannelSize(size int) TMOption {
-	return func(tm *TaskManager) {
-		tm.channelBufferSize = size
-	}
+	return func(tm *TaskManager) { tm.channelBufferSize = size }
 }
 
 // WithLogger sets the logger for the TaskManager. The default is a no-op logger.
 func WithLogger(logger zerolog.Logger) TMOption {
-	return func(tm *TaskManager) {
-		tm.log = logger
-	}
+	return func(tm *TaskManager) { tm.log = logger }
 }
 
-// WithMinWorkerCount sets the minimum number of workers for the TaskManager. The default is the
-// number of CPU cores found on the system at runtime.
-func WithMinWorkerCount(count int) TMOption {
-	return func(tm *TaskManager) {
-		tm.minWorkerCount = count
-	}
+// WithMPMinWorkerCount (pool executor setting) sets the minimum number of workers for the
+// TaskManager's worker pool. The default is the number of CPU cores found on the system at
+// runtime.
+func WithMPMinWorkerCount(count int) TMOption {
+	return func(tm *TaskManager) { tm.peMinWorkerCount = count }
 }
 
-// WithScaleInterval sets the interval at which the worker pool is scaled for the TaskManager.
-// The default is 1 minute.
-func WithScaleInterval(interval time.Duration) TMOption {
-	return func(tm *TaskManager) {
-		tm.scaleInterval = interval
-	}
+// WithMPScaleInterval (pool executor setting) sets the interval at which the worker pool is scaled
+// for the TaskManager. The default is 1 minute.
+func WithMPScaleInterval(interval time.Duration) TMOption {
+	return func(tm *TaskManager) { tm.peScaleInterval = interval }
+}
+
+// WithMDParallel (distributed executor setting) controls whether tasks inside each job execute in
+// parallel (default: true).
+func WithMDParallel(parallel bool) TMOption {
+	return func(tm *TaskManager) { tm.deParallel = parallel }
+}
+
+// WithMDMaxParallel (distributed executor setting) sets max parallelism per job (0 = unlimited).
+func WithMDMaxParallel(n int) TMOption {
+	return func(tm *TaskManager) { tm.deMaxPar = n }
+}
+
+// WithMDCatchUpMax (distributed executor setting) sets how many missed cadences may run
+// back-to-back when behind (default: 1).
+func WithMDCatchUpMax(n int) TMOption {
+	return func(tm *TaskManager) { tm.deCatchUpMax = n }
 }
