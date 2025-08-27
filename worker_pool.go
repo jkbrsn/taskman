@@ -286,6 +286,8 @@ func (wp *workerPool) stop() {
 
 	// Signal worker pool is done
 	close(wp.workerPoolDone)
+
+	wp.log.Debug().Msg("Worker pool stopped")
 }
 
 // stopWorker signals a specific worker to stop processing tasks and exit. This will also remove
