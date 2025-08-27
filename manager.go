@@ -37,10 +37,7 @@ type TMOption func(*TaskManager)
 
 // TaskManager manages task scheduling and execution. Tasks are scheduled within Jobs, and the
 // manager dispatches scheduled jobs to a worker pool for execution.
-// TODO: remove mutex lock
 type TaskManager struct {
-	sync.RWMutex
-
 	log    zerolog.Logger
 	ctx    context.Context
 	cancel context.CancelFunc
