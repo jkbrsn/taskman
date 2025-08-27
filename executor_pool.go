@@ -65,64 +65,108 @@ func (e *poolExecutor) periodicWorkerScaling() {
 	}
 }
 
-// run runs the main loop of TaskManager.
+// run runs the main loop of the pool executor.
 func (e *poolExecutor) run() {
-	defer func() {
-		close(e.runDone)
-	}()
-	for {
-		e.mu.Lock()
-		if e.jobQueue.Len() == 0 {
-			e.mu.Unlock()
-			select {
-			case <-e.newJobChan:
-				// New job added, checking for next job
-				continue
-			case <-e.ctx.Done():
-				// TaskManager received stop signal, exiting run loop
-				return
-			}
-		} else {
-			nextJob := e.jobQueue[0]
-			now := time.Now()
-			delay := nextJob.NextExec.Sub(now)
-			if delay <= 0 {
-				e.log.Trace().Msgf("Dispatching job %s", nextJob.ID)
-				tasks := nextJob.Tasks
-				e.mu.Unlock()
+	defer close(e.runDone)
 
-				// Dispatch all tasks in the job to the worker pool for execution
-				for _, task := range tasks {
-					select {
-					case <-e.ctx.Done():
-						// TaskManager received stop signal during task dispatch, exiting run loop
-						return
-					case e.taskChan <- task:
-						// Successfully sent the task
-					}
+	// Reusable timer to avoid goroutine churn from time.After
+	var (
+		timer *time.Timer
+		fires <-chan time.Time
+	)
+
+	stopTimer := func() {
+		if timer != nil {
+			if !timer.Stop() {
+				// Drain if already fired
+				select {
+				case <-timer.C:
+				default:
 				}
-
-				// Reschedule the job
-				e.mu.Lock()
-				nextJob.NextExec = nextJob.NextExec.Add(nextJob.Cadence)
-				heap.Fix(&e.jobQueue, nextJob.index)
-				e.mu.Unlock()
-				continue
 			}
-			e.mu.Unlock()
+		}
+		fires = nil
+	}
 
-			// Wait until the next job is due or until stopped.
+	for {
+		// Snapshot only what's needed under lock
+		e.mu.Lock()
+		queueLen := e.jobQueue.Len()
+		var (
+			jobID    string
+			tasks    []Task
+			nextExec time.Time
+			cadence  time.Duration
+			index    int
+		)
+		if queueLen > 0 {
+			next := e.jobQueue[0]
+			jobID = next.ID
+			tasks = next.Tasks
+			nextExec = next.NextExec
+			cadence = next.Cadence
+			index = next.index
+		}
+		e.mu.Unlock()
+
+		if queueLen == 0 {
+			// No jobs: wait for new job or stop
+			stopTimer()
 			select {
-			case <-time.After(delay):
-				// Time to execute the next job
-				continue
 			case <-e.newJobChan:
-				// A new job was added, check for the next job
 				continue
 			case <-e.ctx.Done():
-				// TaskManager received stop signal during wait, exiting run loop
 				return
 			}
+		}
+
+		now := time.Now()
+		delay := nextExec.Sub(now)
+		if delay <= 0 {
+			// Dispatch without holding lock
+			e.log.Trace().Msgf("Dispatching job %s", jobID)
+			for _, task := range tasks {
+				select {
+				case <-e.ctx.Done():
+					return
+				case e.taskChan <- task:
+				}
+			}
+
+			// Reschedule the job under lock
+			e.mu.Lock()
+			if index < len(e.jobQueue) && e.jobQueue[index].ID == jobID {
+				e.jobQueue[index].NextExec = nextExec.Add(cadence)
+				heap.Fix(&e.jobQueue, index)
+			}
+			e.mu.Unlock()
+			continue
+		}
+
+		// Wait until due, but reuse timer so we can preempt on new jobs/stop
+		if timer == nil {
+			timer = time.NewTimer(delay)
+			fires = timer.C
+		} else {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(delay)
+			fires = timer.C
+		}
+
+		select {
+		case <-fires:
+			// Time to execute next job
+			continue
+		case <-e.newJobChan:
+			// New job added; re-evaluate queue head
+			continue
+		case <-e.ctx.Done():
+			return
 		}
 	}
 }
