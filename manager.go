@@ -13,7 +13,7 @@ import (
 
 const (
 	maxWorkerCount       = 4096
-	defaultScaleInterval = 1 * time.Minute
+	defaultScaleInterval = 30 * time.Second
 	defaultBufferSize    = 64
 
 	defaultCatchUpMax = 1
@@ -38,7 +38,8 @@ type TMOption func(*TaskManager)
 // TaskManager manages task scheduling and execution. Tasks are scheduled within Jobs, and the
 // manager dispatches scheduled jobs to a worker pool for execution.
 type TaskManager struct {
-	log    zerolog.Logger
+	log zerolog.Logger
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -162,7 +163,7 @@ func (tm *TaskManager) Stop() {
 
 // setDefaultOptions sets default values for the options of the TaskManager.
 func setDefaultOptions(tm *TaskManager) {
-	tm.log = zerolog.New(zerolog.Nop())
+	tm.log = zerolog.Nop()
 	tm.channelBufferSize = defaultBufferSize
 
 	tm.peMinWorkerCount = runtime.NumCPU()

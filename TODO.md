@@ -2,7 +2,6 @@
 
 ## TODO v0.4+
 
-- Evaluate scaling system robustness and speed
 - Add functional options
   - An option to execute a job a select amount of times, e.g. a "one-hit" or "multi-hit" job, either with immediate or delayed execution
   - An option to instantly execute a job already in the queue, even though it has some time until next execution
