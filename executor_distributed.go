@@ -232,13 +232,24 @@ func (r *jobRunner) runSequential(errCh chan<- error, metrics *managerMetrics) {
 		if r.ctx.Err() != nil {
 			return
 		}
-		if err := t.Execute(); err != nil {
-			select {
-			case errCh <- err:
-			default:
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					// Report panic as error but keep runner alive
+					select {
+					case errCh <- fmt.Errorf("runner %s: panic: %v", r.job.ID, rec):
+					default:
+					}
+				}
+			}()
+			if err := t.Execute(); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
 			}
-		}
-		metrics.totalTaskExecutions.Add(1)
+			metrics.totalTaskExecutions.Add(1)
+		}()
 	}
 }
 
@@ -266,6 +277,14 @@ func (r *jobRunner) runParallel(errCh chan<- error, metrics *managerMetrics) {
 		wg.Add(1)
 		go func(tt Task) {
 			defer wg.Done()
+			defer func() {
+				if rec := recover(); rec != nil {
+					select {
+					case errCh <- fmt.Errorf("runner %s: panic: %v", r.job.ID, rec):
+					default:
+					}
+				}
+			}()
 			if err := tt.Execute(); err != nil {
 				select {
 				case errCh <- err:
