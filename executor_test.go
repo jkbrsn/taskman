@@ -86,7 +86,8 @@ func (s *executorTestSuite) TestExecutorReplace(t *testing.T) {
 		exec.Metrics().ManagedJobs)
 	// TODO: activate when job fetch exists
 	/* qJob := exec.jobQueue[0]
-	assert.Equal(t, firstJob.ID, qJob.ID, "Expected ID to be '%s', got '%s'", firstJob.ID, qJob.ID) */
+	assert.Equal(t, firstJob.ID, qJob.ID,
+	    "Expected ID to be '%s', got '%s'", firstJob.ID, qJob.ID) */
 
 	// Replace the first job
 	secondJob := getMockedJob(4, "aJobID", 50*time.Millisecond, 100*time.Millisecond)

@@ -30,6 +30,7 @@ type distributedExecutor struct {
 	maxPar     int  // parallelism limit per job (0 = unlimited)
 }
 
+// Metrics returns the metrics for the distributed executor.
 func (e *distributedExecutor) Metrics() TaskManagerMetrics {
 	return TaskManagerMetrics{
 		ManagedJobs:          int(e.met.jobsManaged.Load()),
@@ -108,7 +109,7 @@ func (e *distributedExecutor) Schedule(j Job) error {
 
 // Start is a no-op for the distributed executor, as each job is started by its runner when
 // scheduled.
-func (e *distributedExecutor) Start() {}
+func (*distributedExecutor) Start() {}
 
 // Stop stops the distributed executor by fanning out to all runners.
 func (e *distributedExecutor) Stop() {
@@ -137,6 +138,14 @@ type jobRunner struct {
 	parallel   bool // run tasks in parallel within a job
 	maxPar     int  // 0 = unlimited
 	catchUpMax int  // max immediate catch-ups per tick when behind
+}
+
+func (r *jobRunner) execute(errCh chan<- error, met *managerMetrics) {
+	if r.parallel {
+		r.runParallel(errCh, met)
+		return
+	}
+	r.runSequential(errCh, met)
 }
 
 // loop runs the job runner.
@@ -168,11 +177,7 @@ func (r *jobRunner) loop(errCh chan<- error, met *managerMetrics) {
 			start := time.Now()
 
 			// Execute tasks for this job tick.
-			if r.parallel {
-				r.runParallel(errCh, met)
-			} else {
-				r.runSequential(errCh, met)
-			}
+			r.execute(errCh, met)
 
 			met.consumeOneExecTime(time.Since(start))
 

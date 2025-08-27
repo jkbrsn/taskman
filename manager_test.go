@@ -606,7 +606,8 @@ func TestManagerMetrics(t *testing.T) {
 		// Verify job queue metrics
 		assert.Equal(t, 1, metrics.ManagedJobs, "Expected 1 job in queue")
 		assert.Equal(t, 1, metrics.ManagedTasks, "Expected 1 task in queue")
-		assert.Equal(t, 1, metrics.PoolMetrics.WidestJobWidth, "Expected max job width to be 1 task")
+		assert.Equal(t, 1, metrics.PoolMetrics.WidestJobWidth,
+			"Expected max job width to be 1 task")
 	})
 }
 
