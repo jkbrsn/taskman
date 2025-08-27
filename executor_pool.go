@@ -342,6 +342,28 @@ func (e *poolExecutor) Replace(job Job) error {
 	// Preserve heap invariants if ordering-related fields ever change
 	heap.Fix(&e.jobQueue, job.index)
 
+	// Metrics and widest-job updates
+	oldTasks := len(oldJob.Tasks)
+	newTasks := len(job.Tasks)
+	deltaTasks := newTasks - oldTasks
+	if deltaTasks != 0 {
+		// Jobs managed unchanged (replace), but tasks managed changes by delta
+		e.metrics.updateTaskMetrics(0, deltaTasks, job.Cadence)
+	}
+	currentMax := int(e.maxJobWidth.Load())
+	if newTasks > currentMax {
+		e.maxJobWidth.Store(int32(newTasks))
+	} else if oldTasks == currentMax && newTasks < currentMax {
+		// The widest job got narrower; recompute widest across queue
+		widest := 0
+		for _, j := range e.jobQueue {
+			if l := len(j.Tasks); l > widest {
+				widest = l
+			}
+		}
+		e.maxJobWidth.Store(int32(widest))
+	}
+
 	return nil
 }
 
