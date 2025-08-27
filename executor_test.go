@@ -157,30 +157,14 @@ func runExecutorTestSuite(t *testing.T, s *executorTestSuite) {
 func TestExecutor(t *testing.T) {
 	t.Run("PoolExecutor", func(t *testing.T) {
 		newExec := func() executor {
-			return newPoolExecutor(
-				context.Background(),
-				zerolog.Nop(),
-				make(chan error, defaultBufferSize),
-				&managerMetrics{},
-				2,
-				10,
-				1*time.Minute,
-			)
+			return getPoolExecutor()
 		}
 		runExecutorTestSuite(t, &executorTestSuite{newExec: newExec})
 	})
 
 	t.Run("DistributedExecutor", func(t *testing.T) {
 		newExec := func() executor {
-			return newDistributedExecutor(
-				context.Background(),
-				zerolog.Nop(),
-				make(chan error, defaultBufferSize),
-				&managerMetrics{},
-				1,
-				true,
-				0,
-			)
+			return getDistExecutor()
 		}
 		runExecutorTestSuite(t, &executorTestSuite{newExec: newExec})
 	})
@@ -196,4 +180,112 @@ func TestExecutor(t *testing.T) {
 		}
 		runSliceTestSuite(t, &executorTestSuite{newExec: newExec})
 	}) */
+}
+
+// Benchmarks
+
+func benchID(i int) string { return "bench-" + itoa(i) }
+
+func benchmarkSchedule(b *testing.B, factory func() executor) {
+	exec := factory()
+	defer exec.Stop()
+	exec.Start()
+
+	const cadence = 10 * time.Second
+
+	for i := 0; b.Loop(); i++ {
+		job := getMockedJob(1, benchID(i), cadence, cadence)
+		if err := exec.Schedule(job); err != nil {
+			b.Fatalf("schedule failed: %v", err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkExecutorSchedule(b *testing.B) {
+	b.Run("Pool", func(b *testing.B) { benchmarkSchedule(b, getPoolExecutor) })
+	b.Run("Distributed", func(b *testing.B) { benchmarkSchedule(b, getDistExecutor) })
+}
+
+func benchmarkExecute(b *testing.B, factory func() executor) {
+	exec := factory()
+	defer exec.Stop()
+	defer func() { time.Sleep(50 * time.Millisecond) }()
+	exec.Start()
+
+	const cadence = 5 * time.Millisecond
+	taskFn := func() error { return nil }
+
+	job := Job{
+		Tasks:    []Task{simpleTask{taskFn}, simpleTask{taskFn}},
+		Cadence:  cadence,
+		ID:       benchID(0),
+		NextExec: time.Now().Add(cadence),
+	}
+	if err := exec.Schedule(job); err != nil {
+		b.Fatalf("schedule failed: %v", err)
+	}
+	time.Sleep(cadence)
+
+	b.ResetTimer()
+	for i := 1; i <= b.N; i++ {
+		j := Job{
+			Tasks:    []Task{simpleTask{taskFn}},
+			Cadence:  cadence,
+			ID:       benchID(i),
+			NextExec: time.Now().Add(cadence),
+		}
+		if err := exec.Schedule(j); err != nil {
+			b.Fatalf("schedule failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkExecutorExecute(b *testing.B) {
+	b.Run("Pool", func(b *testing.B) { benchmarkExecute(b, getPoolExecutor) })
+	b.Run("Distributed", func(b *testing.B) { benchmarkExecute(b, getDistExecutor) })
+}
+
+// Lightweight int->string for benchmark IDs
+var digits = [...]byte{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'}
+
+func itoa(x int) string {
+	if x == 0 {
+		return "0"
+	}
+	buf := make([]byte, 0, 20)
+	for x > 0 {
+		buf = append(buf, digits[x%10])
+		x /= 10
+	}
+	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
+		buf[i], buf[j] = buf[j], buf[i]
+	}
+	return string(buf)
+}
+
+// Helpers
+
+func getPoolExecutor() executor {
+	return newPoolExecutor(
+		context.Background(),
+		zerolog.Nop(),
+		make(chan error, defaultBufferSize),
+		&managerMetrics{},
+		2,
+		10,
+		time.Minute,
+	)
+}
+
+func getDistExecutor() executor {
+	return newDistributedExecutor(
+		context.Background(),
+		zerolog.Nop(),
+		make(chan error, defaultBufferSize),
+		&managerMetrics{},
+		1,
+		true,
+		0,
+	)
 }

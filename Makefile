@@ -1,4 +1,4 @@
-.PHONY: explain test fmt lint lint-json default
+.PHONY: explain test bench fmt lint lint-json default
 
 .DEFAULT_GOAL := explain
 
@@ -12,6 +12,7 @@ explain:
 	@echo ""
 	@echo "Targets:"
 	@echo "  test             - Run tests."
+	@echo "  bench            - Run benchmarks."
 	@echo "  fmt              - Run go fmt."
 	@echo "  lint             - Run golangci-lint."
 	@echo "  lint-json        - Run golangci-lint (JSON output)."
@@ -32,6 +33,10 @@ N ?= 1
 test:
 	@echo "==> Running tests..."
 	@go test -count=$(N) $(TEST_FLAGS) ./...
+
+bench:
+	@echo "==> Running benchmarks..."
+	@go test -count=$(N) $(TEST_FLAGS) -bench=. -benchmem -benchtime=1s -run=^$ -v ./...
 
 fmt:
 	@echo "==> Running formatter (go fmt)..."
