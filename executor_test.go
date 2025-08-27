@@ -29,12 +29,12 @@ func (s *executorTestSuite) TestExecutorSchedule(t *testing.T) {
 		// Assert that the job was added
 		assert.Equal(t, 1, exec.Metrics().ManagedJobs, "Expected job queue length to be 1, got %d",
 			exec.Metrics().ManagedJobs)
-		// TODO: activate when job fetch exists
-		/* scheduledJob := exec.jobQueue[0]
+		scheduledJob, err := exec.Job(job.ID)
+		assert.NoError(t, err)
 		assert.Equal(t, len(job.Tasks), len(scheduledJob.Tasks),
 			len(job.Tasks), "Expected job to have 2 tasks, got %d")
 		assert.Equal(t, job.ID, scheduledJob.ID, "Expected job ID to be %s, got %s",
-			scheduledJob.ID, job.ID) */
+			scheduledJob.ID, job.ID)
 	})
 
 	t.Run("duplicate job", func(t *testing.T) {
@@ -54,10 +54,10 @@ func (s *executorTestSuite) TestExecutorRemove(t *testing.T) {
 	// Assert that the job was added
 	assert.Equal(t, 1, exec.Metrics().ManagedJobs, "Expected job queue length to be 1, got %d",
 		exec.Metrics().ManagedJobs)
-	// TODO: activate when job fetch exists
-	/* qJob := exec.jobQueue[0]
+	qJob, err := exec.Job(job.ID)
+	assert.NoError(t, err)
 	assert.Equal(t, job.ID, qJob.ID, "Expected job ID to be %s, got %s", job.ID, qJob.ID)
-	assert.Equal(t, 2, len(qJob.Tasks), "Expected job to have 2 tasks, got %d", len(qJob.Tasks)) */
+	assert.Equal(t, 2, len(qJob.Tasks), "Expected job to have 2 tasks, got %d", len(qJob.Tasks))
 
 	// Remove the job
 	err = exec.Remove(job.ID)
@@ -84,22 +84,20 @@ func (s *executorTestSuite) TestExecutorReplace(t *testing.T) {
 	// Assert job added
 	assert.Equal(t, 1, exec.Metrics().ManagedJobs, "Expected job queue length to be 1, got %d",
 		exec.Metrics().ManagedJobs)
-	// TODO: activate when job fetch exists
-	/* qJob := exec.jobQueue[0]
-	assert.Equal(t, firstJob.ID, qJob.ID,
-	    "Expected ID to be '%s', got '%s'", firstJob.ID, qJob.ID) */
+	qJob, err := exec.Job(firstJob.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, firstJob.ID, qJob.ID, "Expected job ID to be %s, got %s", firstJob.ID, qJob.ID)
 
 	// Replace the first job
 	secondJob := getMockedJob(4, "aJobID", 50*time.Millisecond, 100*time.Millisecond)
 	err = exec.Replace(secondJob)
 	assert.NoError(t, err)
 	// Assert that the job was replaced in the queue
-	// TODO: activate when job fetch exists
 	assert.Equal(t, 1, exec.Metrics().ManagedJobs,
 		"Expected job queue length to be 1, got %d", exec.Metrics().ManagedJobs)
-	/* qJob = exec.jobQueue[0]
-	// The queue job should retain the index and NextExec time of the first job
-	assert.Equal(t, firstJob.index, qJob.index,
+	qJob, err = exec.Job(secondJob.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, secondJob.ID, qJob.ID,
 		"Expected index to be '%s', got '%s'", secondJob.index, qJob.index)
 	assert.Equal(t, firstJob.NextExec, qJob.NextExec,
 		"Expected ID to be '%s', got '%s'", secondJob.NextExec, qJob.NextExec)
@@ -109,7 +107,7 @@ func (s *executorTestSuite) TestExecutorReplace(t *testing.T) {
 	assert.Equal(t, secondJob.Cadence, qJob.Cadence,
 		"Expected cadence to be '%s', got '%s'", secondJob.Cadence, qJob.Cadence)
 	assert.Equal(t, len(secondJob.Tasks), len(qJob.Tasks),
-		"Expected job to have %d tasks, got %d", len(secondJob.Tasks), len(qJob.Tasks)) */
+		"Expected job to have %d tasks, got %d", len(secondJob.Tasks), len(qJob.Tasks))
 
 	// Try to replace a non-existing job
 	thirdJob := getMockedJob(2, "anotherJobID", 10*time.Millisecond, 100*time.Millisecond)
@@ -132,8 +130,7 @@ func (s *executorTestSuite) TestExecutorConcurrentSchedule(t *testing.T) {
 			defer wg.Done()
 			for j := range numTasksPerGoroutine {
 				taskID := fmt.Sprintf("task-%d-%d", id, j)
-				// Use a long cadence to avoid task execution before test ends,
-				// as this changes the queue length
+				// Use a long cadence to avoid task execution before test ends
 				job := getMockedJob(2, taskID, 2*time.Second, 2*time.Second)
 				assert.NoError(t, exec.Schedule(job), "Error adding job concurrently")
 			}
@@ -163,7 +160,7 @@ func TestExecutor(t *testing.T) {
 			return newPoolExecutor(
 				context.Background(),
 				zerolog.Nop(),
-				make(chan error),
+				make(chan error, defaultBufferSize),
 				&managerMetrics{},
 				2,
 				10,
@@ -178,7 +175,7 @@ func TestExecutor(t *testing.T) {
 			return newDistributedExecutor(
 				context.Background(),
 				zerolog.Nop(),
-				make(chan error),
+				make(chan error, defaultBufferSize),
 				&managerMetrics{},
 				1,
 				true,

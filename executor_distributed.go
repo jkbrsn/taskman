@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jkbrsn/threadsafe"
 	"github.com/rs/zerolog"
 )
 
@@ -18,11 +19,10 @@ type distributedExecutor struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu      sync.RWMutex
-	runners map[string]*jobRunner // jobID -> runner
+	runners threadsafe.Map[string, *jobRunner] // jobID -> runner
 
-	errCh chan error
-	met   *managerMetrics
+	errCh   chan error
+	metrics *managerMetrics
 
 	// Configurable options
 	catchUpMax int  // max immediate catch-ups per tick when behind schedule
@@ -30,80 +30,87 @@ type distributedExecutor struct {
 	maxPar     int  // parallelism limit per job (0 = unlimited)
 }
 
+// Job returns the job with the given ID.
+func (e *distributedExecutor) Job(jobID string) (Job, error) {
+	runner, ok := e.runners.Get(jobID)
+	if !ok {
+		return Job{}, fmt.Errorf("job with ID %s not found", jobID)
+	}
+	runner.mu.RLock()
+	defer runner.mu.RUnlock()
+
+	return runner.job, nil
+}
+
 // Metrics returns the metrics for the distributed executor.
 func (e *distributedExecutor) Metrics() TaskManagerMetrics {
 	return TaskManagerMetrics{
-		ManagedJobs:          int(e.met.jobsManaged.Load()),
-		ManagedTasks:         int(e.met.tasksManaged.Load()),
-		TaskAverageExecTime:  time.Duration(e.met.averageExecTime.Load()),
-		TasksTotalExecutions: int(e.met.totalTaskExecutions.Load()),
-		TasksPerSecond:       e.met.tasksPerSecond.Load(),
+		ManagedJobs:          int(e.metrics.jobsManaged.Load()),
+		JobsPerSecond:        e.metrics.jobsPerSecond.Load(),
+		ManagedTasks:         int(e.metrics.tasksManaged.Load()),
+		TasksPerSecond:       e.metrics.tasksPerSecond.Load(),
+		TaskAverageExecTime:  time.Duration(e.metrics.averageExecTime.Load()),
+		TasksTotalExecutions: int(e.metrics.totalTaskExecutions.Load()),
 		PoolMetrics:          nil,
 	}
 }
 
 // Remove removes a job.
 func (e *distributedExecutor) Remove(jobID string) error {
-	e.mu.Lock()
-	r, ok := e.runners[jobID]
+	runner, ok := e.runners.Get(jobID)
 	if !ok {
-		e.mu.Unlock()
 		return fmt.Errorf("job with ID %s not found", jobID)
 	}
-	delete(e.runners, jobID)
-	e.mu.Unlock()
+	e.runners.Delete(jobID)
 
-	r.cancel()
-	r.wg.Wait()
+	runner.cancel()
+	runner.wg.Wait()
 
-	// adjust metrics (negative counts)
-	e.met.updateTaskMetrics(-1, -len(r.job.Tasks), r.job.Cadence)
+	e.metrics.updateTaskMetrics(-1, -len(runner.job.Tasks), runner.job.Cadence)
 	return nil
 }
 
 // Replace replaces a job.
-func (e *distributedExecutor) Replace(j Job) error {
-	e.mu.Lock()
-	r, ok := e.runners[j.ID]
+func (e *distributedExecutor) Replace(job Job) error {
+	runner, ok := e.runners.Get(job.ID)
 	if !ok {
-		e.mu.Unlock()
 		return errors.New("job not found")
 	}
-	// preserve schedule position
-	j.NextExec = r.job.NextExec
-	r.job = j
-	e.mu.Unlock()
-	// metrics: if task width changed, update maxJobWidth & tasksInQueue deltas
+
+	// Preserve schedule position
+	runner.mu.Lock()
+	job.NextExec = runner.job.NextExec
+	runner.job = job
+	runner.mu.Unlock()
+
 	return nil
 }
 
 // Schedule schedules a new job.
-func (e *distributedExecutor) Schedule(j Job) error {
-	if err := j.Validate(); err != nil {
+func (e *distributedExecutor) Schedule(job Job) error {
+	if err := job.Validate(); err != nil {
 		return fmt.Errorf("invalid job: %w", err)
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if _, exists := e.runners[j.ID]; exists {
+	if _, exists := e.runners.Get(job.ID); exists {
 		return errors.New("duplicate job ID")
 	}
 
 	rCtx, rCancel := context.WithCancel(e.ctx)
-	r := &jobRunner{
-		job:        j,
+	runner := &jobRunner{
+		job:        job,
 		ctx:        rCtx,
 		cancel:     rCancel,
 		parallel:   e.parallel,
 		maxPar:     e.maxPar,
 		catchUpMax: e.catchUpMax,
 	}
-	r.wg.Add(1)
-	go r.loop(e.errCh, e.met)
-	e.runners[j.ID] = r
+	runner.wg.Add(1)
+	go runner.loop(e.errCh, e.metrics)
 
-	// metrics
-	e.met.updateTaskMetrics(1, len(j.Tasks), j.Cadence)
+	e.runners.Set(job.ID, runner)
+	e.metrics.updateTaskMetrics(1, len(job.Tasks), job.Cadence)
+
 	return nil
 }
 
@@ -111,25 +118,21 @@ func (e *distributedExecutor) Schedule(j Job) error {
 // scheduled.
 func (*distributedExecutor) Start() {}
 
-// Stop stops the distributed executor by fanning out to all runners.
+// Stop stops the distributed executor by sending a cancel signal to all runners.
 func (e *distributedExecutor) Stop() {
-	e.mu.RLock()
-	for _, r := range e.runners {
-		r.cancel()
-	}
-	e.mu.RUnlock()
 	e.cancel()
 
 	// wait for all to finish
-	e.mu.RLock()
-	for _, r := range e.runners {
-		r.wg.Wait()
-	}
-	e.mu.RUnlock()
+	e.runners.Range(func(key string, value *jobRunner) bool {
+		value.wg.Wait()
+		return true
+	})
 }
 
 // jobRunner is an implementation of job runner that runs tasks in a separate goroutine.
 type jobRunner struct {
+	mu sync.RWMutex
+
 	job    Job
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -140,12 +143,12 @@ type jobRunner struct {
 	catchUpMax int  // max immediate catch-ups per tick when behind
 }
 
-func (r *jobRunner) execute(errCh chan<- error, met *managerMetrics) {
+func (r *jobRunner) execute(errCh chan<- error, metrics *managerMetrics) {
 	if r.parallel {
-		r.runParallel(errCh, met)
+		r.runParallel(errCh, metrics)
 		return
 	}
-	r.runSequential(errCh, met)
+	r.runSequential(errCh, metrics)
 }
 
 // loop runs the job runner.
@@ -155,11 +158,13 @@ func (r *jobRunner) execute(errCh chan<- error, met *managerMetrics) {
 // cadence. If the runner fell behind schedule (e.g., the previous run took longer than
 // one cadence), we allow it to "catch up" by at most catchUpMax skipped periods to avoid
 // a long backlog of immediate executions.
-func (r *jobRunner) loop(errCh chan<- error, met *managerMetrics) {
+func (r *jobRunner) loop(errCh chan<- error, metrics *managerMetrics) {
 	defer r.wg.Done()
 
 	// Initialize the first fire time from the job's schedule.
+	r.mu.RLock()
 	next := r.job.NextExec
+	r.mu.RUnlock()
 	timer := time.NewTimer(time.Until(next))
 	defer timer.Stop()
 
@@ -177,15 +182,18 @@ func (r *jobRunner) loop(errCh chan<- error, met *managerMetrics) {
 			start := time.Now()
 
 			// Execute tasks for this job tick.
-			r.execute(errCh, met)
+			r.execute(errCh, metrics)
 
-			met.consumeOneExecTime(time.Since(start))
+			metrics.consumeOneExecTime(time.Since(start))
 
 			// Advance "next" forward by whole cadences until it lands in the future,
 			// but cap the number of immediate catch-ups to catchUpMax.
 			skips := 0
+			r.mu.RLock()
+			cadence := r.job.Cadence
+			r.mu.RUnlock()
 			for {
-				next = next.Add(r.job.Cadence)
+				next = next.Add(cadence)
 				if skips >= catchUpMax || next.After(time.Now()) {
 					break
 				}
@@ -193,7 +201,7 @@ func (r *jobRunner) loop(errCh chan<- error, met *managerMetrics) {
 			}
 
 			// Reset the timer to fire at the upcoming "next" (never negative duration).
-			d := max(time.Until(next), 0)
+			duration := max(time.Until(next), 0)
 
 			// Drain the timer channel if needed before resetting to avoid spurious wakeups.
 			if !timer.Stop() {
@@ -202,14 +210,18 @@ func (r *jobRunner) loop(errCh chan<- error, met *managerMetrics) {
 				default:
 				}
 			}
-			timer.Reset(d)
+			timer.Reset(duration)
 		}
 	}
 }
 
 // runSequential runs the job sequentially.
-func (r *jobRunner) runSequential(errCh chan<- error, met *managerMetrics) {
-	for _, t := range r.job.Tasks {
+func (r *jobRunner) runSequential(errCh chan<- error, metrics *managerMetrics) {
+	r.mu.RLock()
+	tasks := r.job.Tasks
+	r.mu.RUnlock()
+
+	for _, t := range tasks {
 		if r.ctx.Err() != nil {
 			return
 		}
@@ -219,18 +231,25 @@ func (r *jobRunner) runSequential(errCh chan<- error, met *managerMetrics) {
 			default:
 			}
 		}
-		met.totalTaskExecutions.Add(1)
+		metrics.totalTaskExecutions.Add(1)
 	}
 }
 
 // runParallel runs the job in parallel.
-func (r *jobRunner) runParallel(errCh chan<- error, met *managerMetrics) {
+func (r *jobRunner) runParallel(errCh chan<- error, metrics *managerMetrics) {
 	var wg sync.WaitGroup
 	var sem chan struct{}
-	if r.maxPar > 0 {
-		sem = make(chan struct{}, r.maxPar)
+
+	r.mu.RLock()
+	maxPar := r.maxPar
+	tasks := r.job.Tasks
+	r.mu.RUnlock()
+
+	if maxPar > 0 {
+		sem = make(chan struct{}, maxPar)
 	}
-	for _, t := range r.job.Tasks {
+
+	for _, t := range tasks {
 		if r.ctx.Err() != nil {
 			break
 		}
@@ -246,20 +265,33 @@ func (r *jobRunner) runParallel(errCh chan<- error, met *managerMetrics) {
 				default:
 				}
 			}
-			met.totalTaskExecutions.Add(1)
+			metrics.totalTaskExecutions.Add(1)
 			if sem != nil {
 				<-sem
 			}
 		}(t)
 	}
+
 	wg.Wait()
 }
 
+// equalRunners returns true if the two runners have the same job ID.
+func equalRunners(r1, r2 *jobRunner) bool {
+	r1.mu.RLock()
+	defer r1.mu.RUnlock()
+
+	r2.mu.RLock()
+	defer r2.mu.RUnlock()
+
+	return r1.job.ID == r2.job.ID
+}
+
+// newDistributedExecutor creates a new distributed executor.
 func newDistributedExecutor(
 	parent context.Context,
 	logger zerolog.Logger,
 	errCh chan error,
-	met *managerMetrics,
+	metrics *managerMetrics,
 	catchUpMax int,
 	parallel bool,
 	maxPar int,
@@ -271,9 +303,9 @@ func newDistributedExecutor(
 		log:        log,
 		ctx:        ctx,
 		cancel:     cancel,
-		runners:    make(map[string]*jobRunner),
+		runners:    threadsafe.NewRWMutexMap[string](equalRunners),
 		errCh:      errCh,
-		met:        met,
+		metrics:    metrics,
 		catchUpMax: catchUpMax,
 		parallel:   parallel,
 		maxPar:     maxPar,

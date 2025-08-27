@@ -185,14 +185,28 @@ func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 	e.log.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
 }
 
+// Job returns the job with the given ID.
+func (e *poolExecutor) Job(jobID string) (Job, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	jobIndex, err := e.jobQueue.JobInQueue(jobID)
+	if err != nil {
+		return Job{}, fmt.Errorf("job with ID %s not found", jobID)
+	}
+	job := *e.jobQueue[jobIndex]
+	return job, nil
+}
+
 // Metrics returns the metrics for the executor.
 func (e *poolExecutor) Metrics() TaskManagerMetrics {
 	return TaskManagerMetrics{
 		ManagedJobs:          int(e.metrics.jobsManaged.Load()),
+		JobsPerSecond:        e.metrics.jobsPerSecond.Load(),
 		ManagedTasks:         int(e.metrics.tasksManaged.Load()),
+		TasksPerSecond:       e.metrics.tasksPerSecond.Load(),
 		TaskAverageExecTime:  time.Duration(e.metrics.averageExecTime.Load()),
 		TasksTotalExecutions: int(e.metrics.totalTaskExecutions.Load()),
-		TasksPerSecond:       e.metrics.tasksPerSecond.Load(),
 		PoolMetrics: &PoolMetrics{
 			WidestJobWidth:      int(e.maxJobWidth.Load()),
 			WorkerCountTarget:   int(e.workerPool.workerCountTarget.Load()),

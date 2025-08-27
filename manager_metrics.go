@@ -11,7 +11,8 @@ import (
 // TaskManagerMetrics stores metrics about the task manager.
 type TaskManagerMetrics struct {
 	// Jobs
-	ManagedJobs int // Total number of jobs in the queue
+	ManagedJobs   int     // Total number of jobs in the queue
+	JobsPerSecond float32 // Number of jobs executed per second
 
 	// Task execution
 	ManagedTasks         int           // Total number of tasks in the queue
@@ -48,14 +49,13 @@ type PoolMetrics struct {
 
 // managerMetrics stores internal metrics about the task manager.
 type managerMetrics struct {
-	// Task execution
+	tasksManaged        atomic.Int64     // Total number of tasks managed
+	tasksPerSecond      uatomic.Float32  // Number of tasks executed per second
 	averageExecTime     uatomic.Duration // Average execution time of tasks
 	totalTaskExecutions atomic.Int64     // Total number of tasks executed
-	tasksPerSecond      uatomic.Float32  // Number of tasks executed per second
 
-	// Task management
-	tasksManaged atomic.Int64 // Total number of tasks managed
-	jobsManaged  atomic.Int64 // Total number of jobs managed
+	jobsManaged   atomic.Int64    // Total number of jobs managed
+	jobsPerSecond uatomic.Float32 // Number of jobs executed per second
 
 	done <-chan struct{}
 }
@@ -87,10 +87,10 @@ func (mm *managerMetrics) consumeOneExecTime(execTime time.Duration) {
 // removed, and tasksPerSecond is the number of tasks executed per second by those tasks.
 func (mm *managerMetrics) updateTaskMetrics(jobDelta, taskDelta int, taskCadence time.Duration) {
 	// Calculate the new number of tasks in the queue
-	currentJobCount := mm.jobsManaged.Load()
-	newJobCount := currentJobCount + int64(jobDelta)
 	currentTaskCount := mm.tasksManaged.Load()
 	newTaskCount := currentTaskCount + int64(taskDelta)
+	currentJobCount := mm.jobsManaged.Load()
+	newJobCount := currentJobCount + int64(jobDelta)
 
 	// Avoid division by zero for tasks; still update jobs count
 	if newTaskCount <= 0 {
@@ -101,24 +101,31 @@ func (mm *managerMetrics) updateTaskMetrics(jobDelta, taskDelta int, taskCadence
 	}
 
 	// Calculate the new tasks per second
-	tasksPerSecond := calcTasksPerSecond(taskDelta, taskCadence)
+	tasksPerSecond := eventsPerSecond(taskDelta, taskCadence)
+	jobsPerSecond := eventsPerSecond(jobDelta, taskCadence)
 
 	// Update the tasks per second metric base on a weighted average
 	newTasksPerSecond := (tasksPerSecond*float32(taskDelta) +
 		mm.tasksPerSecond.Load()*float32(currentTaskCount)) /
 		float32(newTaskCount)
 
+	// Update the jobs per second metric base on a weighted average
+	newJobsPerSecond := (jobsPerSecond*float32(jobDelta) +
+		mm.jobsPerSecond.Load()*float32(currentJobCount)) /
+		float32(newJobCount)
+
 	// Store updated values
 	mm.tasksPerSecond.Store(newTasksPerSecond)
-	mm.jobsManaged.Store(newJobCount)
-	mm.tasksManaged.Store(newTaskCount)
+	mm.tasksManaged.Add(int64(taskDelta))
+	mm.jobsPerSecond.Store(newJobsPerSecond)
+	mm.jobsManaged.Add(int64(jobDelta))
 }
 
-// calcTasksPerSecond calculates the number of tasks executed per second.
-func calcTasksPerSecond(nTasks int, cadence time.Duration) float32 {
+// eventsPerSecond calculates the number of events executed per second.
+func eventsPerSecond(n int, cadence time.Duration) float32 {
 	if cadence == 0 {
 		return 0
 	}
-	tasks := math.Abs(float64(nTasks))
-	return float32(tasks) / float32(cadence.Seconds())
+	events := math.Abs(float64(n))
+	return float32(events) / float32(cadence.Seconds())
 }
