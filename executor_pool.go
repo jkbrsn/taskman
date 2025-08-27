@@ -315,14 +315,18 @@ func (e *poolExecutor) Replace(job Job) error {
 	// Get the job's index in the queue
 	jobIndex, err := e.jobQueue.JobInQueue(job.ID)
 	if err != nil {
-		return errors.New("job not found")
+		return fmt.Errorf("replace job %q: %w", job.ID, err)
 	}
 
-	// Replace the job in the queue
+	// Replace the job in the queue, preserving scheduling fields
 	oldJob := e.jobQueue[jobIndex]
 	job.NextExec = oldJob.NextExec
 	job.index = oldJob.index
 	e.jobQueue[jobIndex] = &job
+
+	// Preserve heap invariants if ordering-related fields ever change
+	heap.Fix(&e.jobQueue, job.index)
+
 	return nil
 }
 
