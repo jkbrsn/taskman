@@ -146,12 +146,54 @@ func (s *executorTestSuite) TestExecutorConcurrentSchedule(t *testing.T) {
 		expectedTasks, exec.Metrics().ManagedJobs)
 }
 
+// ConcurrentExecution schedules many small jobs with short cadence and waits for executions.
+func (s *executorTestSuite) TestExecutorConcurrentExecution(t *testing.T) {
+	exec := s.newExec()
+	defer exec.Stop()
+	exec.Start()
+
+	// Small job workload
+	taskFn := func() error { return nil }
+	cadence := 5 * time.Millisecond
+
+	numGoroutines := 10
+	numJobsPerGoroutine := 100
+
+	var wg sync.WaitGroup
+	for id := range numGoroutines {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := range numJobsPerGoroutine {
+				jobID := fmt.Sprintf("exec-%d-%d", id, j)
+				job := Job{
+					Tasks:    []Task{simpleTask{taskFn}},
+					Cadence:  cadence,
+					ID:       jobID,
+					NextExec: time.Now().Add(cadence),
+				}
+				assert.NoError(t, exec.Schedule(job))
+			}
+		}(id)
+	}
+	wg.Wait()
+
+	// Allow at least one tick for all jobs
+	time.Sleep(cadence * 2)
+
+	// Basic sanity: all jobs scheduled
+	expectedJobs := numGoroutines * numJobsPerGoroutine
+	assert.Equal(t, expectedJobs, exec.Metrics().ManagedJobs,
+		"Expected %d jobs scheduled, got %d", expectedJobs, exec.Metrics().ManagedJobs)
+}
+
 // runExecutorTestSuite runs all tests in the suite.
 func runExecutorTestSuite(t *testing.T, s *executorTestSuite) {
 	t.Run("Schedule", s.TestExecutorSchedule)
 	t.Run("Remove", s.TestExecutorRemove)
 	t.Run("Replace", s.TestExecutorReplace)
 	t.Run("ConcurrentSchedule", s.TestExecutorConcurrentSchedule)
+	t.Run("ConcurrentExecution", s.TestExecutorConcurrentExecution)
 }
 
 func TestExecutor(t *testing.T) {
