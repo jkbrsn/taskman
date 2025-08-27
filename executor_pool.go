@@ -408,16 +408,18 @@ func (e *poolExecutor) Start() {
 	if e.metrics == nil {
 		e.metrics = &managerMetrics{}
 	}
-	e.metrics.done = e.workerPoolDone
 
 	// Job queue
 	e.jobQueue = make(priorityQueue, 0)
 	heap.Init(&e.jobQueue)
 
-	// Channels
+	// Channels (ownership):
+	// - executor owns: taskChan, newJobChan
+	// - workerPool owns: execTimeChan, workerPoolDone signaling
+	// - caller owns: errorChan
 	e.taskChan = make(chan Task, e.channelBufferSize)
-	// Use the provided errorChan to propagate errors to TaskManager
 	if e.errorChan == nil {
+		// Create internal error channel if caller didn't provide one
 		e.errorChan = make(chan error, e.channelBufferSize)
 	}
 	e.workerPoolDone = make(chan struct{})
@@ -434,6 +436,9 @@ func (e *poolExecutor) Start() {
 		e.workerPoolDone,
 	)
 
+	// Now that worker pool is created, tie metrics done channel to workerPoolDone
+	e.metrics.done = e.workerPoolDone
+
 	go e.metrics.consumeExecTime(e.workerPool.execTimeChan)
 	go e.run()
 	go e.periodicWorkerScaling()
@@ -443,17 +448,25 @@ func (e *poolExecutor) Start() {
 // run loop has exited, and the worker pool has stopped.
 func (e *poolExecutor) Stop() {
 	e.stopOnce.Do(func() {
+		// Stop sequence and channel ownership:
+		// - executor owns newJobChan and taskChan
+		// - workerPool owns execTimeChan and workerPoolDone
+		// - caller owns errorChan (never closed here)
+
+		// 1) Signal cancellation to all components
 		e.cancel()
 
-		// Stop the worker pool
-		e.workerPool.stop()
+		// 2) Close newJobChan to unblock run loop when queue is empty
+		close(e.newJobChan)
 
-		// Wait for the run loop to exit, and the worker pool to stop
+		// 3) Wait for run loop to exit cleanly
 		<-e.runDone
+
+		// 4) Stop the worker pool and wait for it to finish
+		e.workerPool.stop()
 		<-e.workerPoolDone
 
-		// Close the remaining channels
-		close(e.newJobChan)
+		// 5) Close taskChan after workers have exited to avoid sends after close
 		close(e.taskChan)
 
 		e.log.Debug().Msg("Executor stopped")
