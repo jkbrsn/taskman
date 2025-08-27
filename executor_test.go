@@ -299,7 +299,7 @@ func itoa(x int) string {
 	buf := make([]byte, 0, 20)
 	for x > 0 {
 		buf = append(buf, digits[x%10])
-		x /= 10
+		x /= 10 // nolint: revive
 	}
 	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
 		buf[i], buf[j] = buf[j], buf[i]

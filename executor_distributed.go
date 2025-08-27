@@ -12,6 +12,34 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// safeExecuteTask executes one task with panic recovery and metrics update.
+func safeExecuteTask(
+	ctx context.Context,
+	jobID string,
+	t Task,
+	errCh chan<- error,
+	metrics *managerMetrics,
+) {
+	if ctx.Err() != nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			select {
+			case errCh <- fmt.Errorf("runner %s: panic: %v", jobID, rec):
+			default:
+			}
+		}
+	}()
+	if err := t.Execute(); err != nil {
+		select {
+		case errCh <- err:
+		default:
+		}
+	}
+	metrics.totalTaskExecutions.Add(1)
+}
+
 // distributedExecutor is an implementation of executor that runs tasks in separate goroutines.
 type distributedExecutor struct {
 	log zerolog.Logger
@@ -130,7 +158,7 @@ func (e *distributedExecutor) Stop() {
 	e.cancel()
 
 	// wait for all to finish
-	e.runners.Range(func(key string, value *jobRunner) bool {
+	e.runners.Range(func(_ string, value *jobRunner) bool {
 		value.wg.Wait()
 		return true
 	})
@@ -226,30 +254,11 @@ func (r *jobRunner) loop(errCh chan<- error, metrics *managerMetrics) {
 func (r *jobRunner) runSequential(errCh chan<- error, metrics *managerMetrics) {
 	r.mu.RLock()
 	tasks := r.job.Tasks
+	jobID := r.job.ID
 	r.mu.RUnlock()
 
 	for _, t := range tasks {
-		if r.ctx.Err() != nil {
-			return
-		}
-		func() {
-			defer func() {
-				if rec := recover(); rec != nil {
-					// Report panic as error but keep runner alive
-					select {
-					case errCh <- fmt.Errorf("runner %s: panic: %v", r.job.ID, rec):
-					default:
-					}
-				}
-			}()
-			if err := t.Execute(); err != nil {
-				select {
-				case errCh <- err:
-				default:
-				}
-			}
-			metrics.totalTaskExecutions.Add(1)
-		}()
+		safeExecuteTask(r.ctx, jobID, t, errCh, metrics)
 	}
 }
 
@@ -275,27 +284,13 @@ func (r *jobRunner) runParallel(errCh chan<- error, metrics *managerMetrics) {
 			sem <- struct{}{}
 		}
 		wg.Add(1)
-		go func(tt Task) {
+		go func(tt Task, jobID string) {
 			defer wg.Done()
-			defer func() {
-				if rec := recover(); rec != nil {
-					select {
-					case errCh <- fmt.Errorf("runner %s: panic: %v", r.job.ID, rec):
-					default:
-					}
-				}
-			}()
-			if err := tt.Execute(); err != nil {
-				select {
-				case errCh <- err:
-				default:
-				}
-			}
-			metrics.totalTaskExecutions.Add(1)
+			safeExecuteTask(r.ctx, jobID, tt, errCh, metrics)
 			if sem != nil {
 				<-sem
 			}
-		}(t)
+		}(t, r.job.ID)
 	}
 
 	wg.Wait()

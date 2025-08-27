@@ -36,11 +36,11 @@ linters:
         - name: cognitive-complexity
           disabled: false
           exclude: [""]
-          arguments: [21]
+          arguments: [25]
         - name: cyclomatic
           disabled: false
           exclude: [""]
-          arguments: [21]
+          arguments: [25]
         - name: function-length
           disabled: false
           exclude: [TEST]

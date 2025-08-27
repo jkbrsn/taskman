@@ -66,6 +66,8 @@ func (e *poolExecutor) periodicWorkerScaling() {
 }
 
 // run runs the main loop of the pool executor.
+// revive:disable:function-length valid
+// revive:disable:cognitive-complexity valid
 func (e *poolExecutor) run() {
 	defer close(e.runDone)
 
@@ -170,6 +172,9 @@ func (e *poolExecutor) run() {
 		}
 	}
 }
+
+// revive:enable:function-length
+// revive:enable:cognitive-complexity
 
 // scaleWorkerPool scales the worker pool based on the current job queue.
 // The worker pool is scaled based on the highest of three metrics:

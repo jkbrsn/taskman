@@ -2,7 +2,7 @@
 
 ## TODO v0.4+
 
-- Add functional options
+- Add more functional options
   - An option to execute a job a select amount of times, e.g. a "one-hit" or "multi-hit" job, either with immediate or delayed execution
   - An option to instantly execute a job already in the queue, even though it has some time until next execution
     - use heap.Fix to reposition the job in the heap, https://cs.opensource.google/go/go/+/refs/tags/go1.23.4:src/container/heap/heap.go;l=83
