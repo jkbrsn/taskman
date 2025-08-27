@@ -252,34 +252,35 @@ func BenchmarkExecutorSchedule(b *testing.B) {
 func benchmarkExecute(b *testing.B, factory func() executor) {
 	exec := factory()
 	defer exec.Stop()
-	defer func() { time.Sleep(50 * time.Millisecond) }()
 	exec.Start()
 
-	const cadence = 5 * time.Millisecond
+	const (
+		cadence   = 5 * time.Millisecond
+		jobCount  = 500
+		safeDelay = 50 * time.Millisecond
+	)
 	taskFn := func() error { return nil }
+	safeStart := time.Now().Add(safeDelay)
 
-	job := Job{
-		Tasks:    []Task{simpleTask{taskFn}, simpleTask{taskFn}},
-		Cadence:  cadence,
-		ID:       benchID(0),
-		NextExec: time.Now().Add(cadence),
-	}
-	if err := exec.Schedule(job); err != nil {
-		b.Fatalf("schedule failed: %v", err)
-	}
-	time.Sleep(cadence)
-
-	b.ResetTimer()
-	for i := 1; i <= b.N; i++ {
+	// Pre-schedule a fixed number of jobs so execution is bounded.
+	for i := range jobCount {
 		j := Job{
 			Tasks:    []Task{simpleTask{taskFn}},
 			Cadence:  cadence,
 			ID:       benchID(i),
-			NextExec: time.Now().Add(cadence),
+			NextExec: safeStart,
 		}
 		if err := exec.Schedule(j); err != nil {
 			b.Fatalf("schedule failed: %v", err)
 		}
+	}
+
+	// Warm up until first executions
+	time.Sleep(3 * cadence)
+
+	for b.Loop() {
+		// Let the system run for one cadence per iteration to measure steady-state cost
+		time.Sleep(cadence)
 	}
 }
 
