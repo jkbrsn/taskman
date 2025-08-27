@@ -179,10 +179,15 @@ func (e *poolExecutor) run() {
 func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 	e.log.Debug().Msgf(
 		"Scaling workers, available/running: %d/%d",
-		e.workerPool.availableWorkers(), e.workerPool.runningWorkers(),
+		e.workerPool.availableWorkers(), e.workerPool.runningWorkers())
+
+	const (
+		bufferFactor50  = 1.5 // modest buffer for predictable metrics
+		bufferFactor100 = 2.0 // larger buffer for less predictable parallel spikes
 	)
-	const bufferFactor50 = 1.5
-	bufferFactor100 := 2.0
+
+	available := e.workerPool.availableWorkers()
+	running := e.workerPool.runningWorkers()
 
 	// Calculate the number of workers needed based on the widest job
 	workersNeededParallelTasks := e.maxJobWidth.Load()
@@ -200,17 +205,11 @@ func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 		math.Ceil(float64(workersNeededConcurrently) * bufferFactor50),
 	)
 
-	// Calculate the number of workers needed right now
+	// Calculate the number of workers needed right now (clamped and hysteresis-aware)
 	var workersNeededImmediately int32
-	if e.workerPool.availableWorkers() < int32(workersNeededNow) {
-		// If there are not enough workers to handle the incoming job, scale up immediately
-		extraWorkersNeeded := int32(workersNeededNow) - e.workerPool.availableWorkers()
-		// Apply the smaller buffer factor for immediate tasks, as this is a more predictable metric
-		workersNeededImmediately = int32(
-			math.Ceil(
-				float64(e.workerPool.runningWorkers()+extraWorkersNeeded) * bufferFactor50,
-			),
-		)
+	if available < int32(workersNeededNow) {
+		extra := int32(workersNeededNow) - available
+		workersNeededImmediately = int32(math.Ceil(float64(running+extra) * bufferFactor50))
 	}
 
 	// Use the highest of the three metrics
@@ -219,14 +218,30 @@ func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 		workersNeededConcurrently,
 		workersNeededImmediately,
 	)
-	// Ensure the worker pool has at least the minimum number of workers
+	// Clamp to configured bounds
 	workersNeeded = max(workersNeeded, int32(e.minWorkerCount))
-	// Ensure the worker pool has at most the maximum number of workers
 	workersNeeded = min(workersNeeded, int32(maxWorkerCount))
 
-	// Adjust the worker pool size
+	// Hysteresis: only scale if delta >= 1 or >=10%
+	prev := e.workerPool.workerCountTarget.Load()
+	delta := int(workersNeeded - prev)
+	if delta < 0 {
+		delta = -delta
+	}
+	threshold := int(math.Max(1, math.Ceil(0.1*float64(prev))))
+	if delta == 0 {
+		// No change
+		return
+	}
+
+	// Always enqueue at least the first change from default (prev==0 or 1)
+	if prev <= 1 || delta >= threshold {
+		e.workerPool.enqueueWorkerScaling(workersNeeded)
+		e.log.Debug().Msgf("Scaling workers -> target: %d (prev: %d)", workersNeeded, prev)
+		return
+	}
+	// For sub-threshold changes, enqueue without logging to avoid noise
 	e.workerPool.enqueueWorkerScaling(workersNeeded)
-	e.log.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
 }
 
 // Job returns the job with the given ID.

@@ -400,6 +400,9 @@ func newWorkerPool(
 	pool.addWorkers(initialWorkerCount)
 	pool.workerCountTarget.Store(int32(initialWorkerCount))
 
+	// Record initial sizing as a scaling event to reflect startup sizing in metrics
+	pool.workerScalingEvents.Add(1)
+
 	go pool.processWorkerCountScaling()
 
 	return pool
