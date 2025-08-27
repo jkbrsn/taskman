@@ -13,6 +13,56 @@ import (
 
 // TODO: metrics test for poolExecutor?
 
+func TestPoolExecutorReplace(t *testing.T) {
+	// Setup executor
+	exec := newPoolExecutor(
+		context.Background(),
+		zerolog.Nop(),
+		make(chan error),
+		&managerMetrics{},
+		4,
+		1,
+		1*time.Minute,
+	)
+	defer exec.Stop()
+	exec.Start()
+
+	// Schedule initial job
+	orig := Job{
+		ID:       "job-replace",
+		Cadence:  50 * time.Millisecond,
+		NextExec: time.Now().Add(30 * time.Millisecond),
+		Tasks:    []Task{MockTask{ID: "t1"}},
+	}
+	assert.NoError(t, exec.Schedule(orig))
+
+	// Snapshot current head NextExec and index before replace
+	time.Sleep(2 * time.Millisecond)
+	exec.mu.RLock()
+	idx, err := exec.jobQueue.JobInQueue("job-replace")
+	assert.NoError(t, err)
+	oldNext := exec.jobQueue[idx].NextExec
+	exec.mu.RUnlock()
+
+	// Replace with wider job and different cadence; NextExec should be preserved
+	repl := Job{
+		ID:      "job-replace",
+		Cadence: 10 * time.Millisecond,
+		Tasks:   []Task{MockTask{ID: "t1"}, MockTask{ID: "t2"}},
+	}
+	assert.NoError(t, exec.Replace(repl))
+
+	// Verify fields and heap invariants preserved
+	exec.mu.RLock()
+	idx2, err2 := exec.jobQueue.JobInQueue("job-replace")
+	assert.NoError(t, err2)
+	got := exec.jobQueue[idx2]
+	assert.Equal(t, oldNext, got.NextExec, "NextExec must be preserved on Replace")
+	// Ensure the job's stored index matches its position
+	assert.Equal(t, idx2, got.index, "heap index must match position after Replace")
+	exec.mu.RUnlock()
+}
+
 func TestPoolExecutorWorkerPoolScaling(t *testing.T) {
 	// Start a pool executor with 1 worker
 	exec := newPoolExecutor(

@@ -65,64 +65,108 @@ func (e *poolExecutor) periodicWorkerScaling() {
 	}
 }
 
-// run runs the main loop of TaskManager.
+// run runs the main loop of the pool executor.
 func (e *poolExecutor) run() {
-	defer func() {
-		close(e.runDone)
-	}()
-	for {
-		e.mu.Lock()
-		if e.jobQueue.Len() == 0 {
-			e.mu.Unlock()
-			select {
-			case <-e.newJobChan:
-				// New job added, checking for next job
-				continue
-			case <-e.ctx.Done():
-				// TaskManager received stop signal, exiting run loop
-				return
-			}
-		} else {
-			nextJob := e.jobQueue[0]
-			now := time.Now()
-			delay := nextJob.NextExec.Sub(now)
-			if delay <= 0 {
-				e.log.Trace().Msgf("Dispatching job %s", nextJob.ID)
-				tasks := nextJob.Tasks
-				e.mu.Unlock()
+	defer close(e.runDone)
 
-				// Dispatch all tasks in the job to the worker pool for execution
-				for _, task := range tasks {
-					select {
-					case <-e.ctx.Done():
-						// TaskManager received stop signal during task dispatch, exiting run loop
-						return
-					case e.taskChan <- task:
-						// Successfully sent the task
-					}
+	// Reusable timer to avoid goroutine churn from time.After
+	var (
+		timer *time.Timer
+		fires <-chan time.Time
+	)
+
+	stopTimer := func() {
+		if timer != nil {
+			if !timer.Stop() {
+				// Drain if already fired
+				select {
+				case <-timer.C:
+				default:
 				}
-
-				// Reschedule the job
-				e.mu.Lock()
-				nextJob.NextExec = nextJob.NextExec.Add(nextJob.Cadence)
-				heap.Fix(&e.jobQueue, nextJob.index)
-				e.mu.Unlock()
-				continue
 			}
-			e.mu.Unlock()
+		}
+		fires = nil
+	}
 
-			// Wait until the next job is due or until stopped.
+	for {
+		// Snapshot only what's needed under lock
+		e.mu.Lock()
+		queueLen := e.jobQueue.Len()
+		var (
+			jobID    string
+			tasks    []Task
+			nextExec time.Time
+			cadence  time.Duration
+			index    int
+		)
+		if queueLen > 0 {
+			next := e.jobQueue[0]
+			jobID = next.ID
+			tasks = next.Tasks
+			nextExec = next.NextExec
+			cadence = next.Cadence
+			index = next.index
+		}
+		e.mu.Unlock()
+
+		if queueLen == 0 {
+			// No jobs: wait for new job or stop
+			stopTimer()
 			select {
-			case <-time.After(delay):
-				// Time to execute the next job
-				continue
 			case <-e.newJobChan:
-				// A new job was added, check for the next job
 				continue
 			case <-e.ctx.Done():
-				// TaskManager received stop signal during wait, exiting run loop
 				return
 			}
+		}
+
+		now := time.Now()
+		delay := nextExec.Sub(now)
+		if delay <= 0 {
+			// Dispatch without holding lock
+			e.log.Trace().Msgf("Dispatching job %s", jobID)
+			for _, task := range tasks {
+				select {
+				case <-e.ctx.Done():
+					return
+				case e.taskChan <- task:
+				}
+			}
+
+			// Reschedule the job under lock
+			e.mu.Lock()
+			if index < len(e.jobQueue) && e.jobQueue[index].ID == jobID {
+				e.jobQueue[index].NextExec = nextExec.Add(cadence)
+				heap.Fix(&e.jobQueue, index)
+			}
+			e.mu.Unlock()
+			continue
+		}
+
+		// Wait until due, but reuse timer so we can preempt on new jobs/stop
+		if timer == nil {
+			timer = time.NewTimer(delay)
+			fires = timer.C
+		} else {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(delay)
+			fires = timer.C
+		}
+
+		select {
+		case <-fires:
+			// Time to execute next job
+			continue
+		case <-e.newJobChan:
+			// New job added; re-evaluate queue head
+			continue
+		case <-e.ctx.Done():
+			return
 		}
 	}
 }
@@ -135,10 +179,15 @@ func (e *poolExecutor) run() {
 func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 	e.log.Debug().Msgf(
 		"Scaling workers, available/running: %d/%d",
-		e.workerPool.availableWorkers(), e.workerPool.runningWorkers(),
+		e.workerPool.availableWorkers(), e.workerPool.runningWorkers())
+
+	const (
+		bufferFactor50  = 1.5 // modest buffer for predictable metrics
+		bufferFactor100 = 2.0 // larger buffer for less predictable parallel spikes
 	)
-	const bufferFactor50 = 1.5
-	bufferFactor100 := 2.0
+
+	available := e.workerPool.availableWorkers()
+	running := e.workerPool.runningWorkers()
 
 	// Calculate the number of workers needed based on the widest job
 	workersNeededParallelTasks := e.maxJobWidth.Load()
@@ -156,17 +205,11 @@ func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 		math.Ceil(float64(workersNeededConcurrently) * bufferFactor50),
 	)
 
-	// Calculate the number of workers needed right now
+	// Calculate the number of workers needed right now (clamped and hysteresis-aware)
 	var workersNeededImmediately int32
-	if e.workerPool.availableWorkers() < int32(workersNeededNow) {
-		// If there are not enough workers to handle the incoming job, scale up immediately
-		extraWorkersNeeded := int32(workersNeededNow) - e.workerPool.availableWorkers()
-		// Apply the smaller buffer factor for immediate tasks, as this is a more predictable metric
-		workersNeededImmediately = int32(
-			math.Ceil(
-				float64(e.workerPool.runningWorkers()+extraWorkersNeeded) * bufferFactor50,
-			),
-		)
+	if available < int32(workersNeededNow) {
+		extra := int32(workersNeededNow) - available
+		workersNeededImmediately = int32(math.Ceil(float64(running+extra) * bufferFactor50))
 	}
 
 	// Use the highest of the three metrics
@@ -175,14 +218,30 @@ func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 		workersNeededConcurrently,
 		workersNeededImmediately,
 	)
-	// Ensure the worker pool has at least the minimum number of workers
+	// Clamp to configured bounds
 	workersNeeded = max(workersNeeded, int32(e.minWorkerCount))
-	// Ensure the worker pool has at most the maximum number of workers
 	workersNeeded = min(workersNeeded, int32(maxWorkerCount))
 
-	// Adjust the worker pool size
+	// Hysteresis: only scale if delta >= 1 or >=10%
+	prev := e.workerPool.workerCountTarget.Load()
+	delta := int(workersNeeded - prev)
+	if delta < 0 {
+		delta = -delta
+	}
+	threshold := int(math.Max(1, math.Ceil(0.1*float64(prev))))
+	if delta == 0 {
+		// No change
+		return
+	}
+
+	// Always enqueue at least the first change from default (prev==0 or 1)
+	if prev <= 1 || delta >= threshold {
+		e.workerPool.enqueueWorkerScaling(workersNeeded)
+		e.log.Debug().Msgf("Scaling workers -> target: %d (prev: %d)", workersNeeded, prev)
+		return
+	}
+	// For sub-threshold changes, enqueue without logging to avoid noise
 	e.workerPool.enqueueWorkerScaling(workersNeeded)
-	e.log.Debug().Msgf("Scaling workers, request: %d", workersNeeded)
 }
 
 // Job returns the job with the given ID.
@@ -271,14 +330,40 @@ func (e *poolExecutor) Replace(job Job) error {
 	// Get the job's index in the queue
 	jobIndex, err := e.jobQueue.JobInQueue(job.ID)
 	if err != nil {
-		return errors.New("job not found")
+		return fmt.Errorf("replace job %q: %w", job.ID, err)
 	}
 
-	// Replace the job in the queue
+	// Replace the job in the queue, preserving scheduling fields
 	oldJob := e.jobQueue[jobIndex]
 	job.NextExec = oldJob.NextExec
 	job.index = oldJob.index
 	e.jobQueue[jobIndex] = &job
+
+	// Preserve heap invariants if ordering-related fields ever change
+	heap.Fix(&e.jobQueue, job.index)
+
+	// Metrics and widest-job updates
+	oldTasks := len(oldJob.Tasks)
+	newTasks := len(job.Tasks)
+	deltaTasks := newTasks - oldTasks
+	if deltaTasks != 0 {
+		// Jobs managed unchanged (replace), but tasks managed changes by delta
+		e.metrics.updateTaskMetrics(0, deltaTasks, job.Cadence)
+	}
+	currentMax := int(e.maxJobWidth.Load())
+	if newTasks > currentMax {
+		e.maxJobWidth.Store(int32(newTasks))
+	} else if oldTasks == currentMax && newTasks < currentMax {
+		// The widest job got narrower; recompute widest across queue
+		widest := 0
+		for _, j := range e.jobQueue {
+			if l := len(j.Tasks); l > widest {
+				widest = l
+			}
+		}
+		e.maxJobWidth.Store(int32(widest))
+	}
+
 	return nil
 }
 
@@ -345,16 +430,18 @@ func (e *poolExecutor) Start() {
 	if e.metrics == nil {
 		e.metrics = &managerMetrics{}
 	}
-	e.metrics.done = e.workerPoolDone
 
 	// Job queue
 	e.jobQueue = make(priorityQueue, 0)
 	heap.Init(&e.jobQueue)
 
-	// Channels
+	// Channels (ownership):
+	// - executor owns: taskChan, newJobChan
+	// - workerPool owns: execTimeChan, workerPoolDone signaling
+	// - caller owns: errorChan
 	e.taskChan = make(chan Task, e.channelBufferSize)
-	// Use the provided errorChan to propagate errors to TaskManager
 	if e.errorChan == nil {
+		// Create internal error channel if caller didn't provide one
 		e.errorChan = make(chan error, e.channelBufferSize)
 	}
 	e.workerPoolDone = make(chan struct{})
@@ -371,6 +458,9 @@ func (e *poolExecutor) Start() {
 		e.workerPoolDone,
 	)
 
+	// Now that worker pool is created, tie metrics done channel to workerPoolDone
+	e.metrics.done = e.workerPoolDone
+
 	go e.metrics.consumeExecTime(e.workerPool.execTimeChan)
 	go e.run()
 	go e.periodicWorkerScaling()
@@ -380,17 +470,25 @@ func (e *poolExecutor) Start() {
 // run loop has exited, and the worker pool has stopped.
 func (e *poolExecutor) Stop() {
 	e.stopOnce.Do(func() {
+		// Stop sequence and channel ownership:
+		// - executor owns newJobChan and taskChan
+		// - workerPool owns execTimeChan and workerPoolDone
+		// - caller owns errorChan (never closed here)
+
+		// 1) Signal cancellation to all components
 		e.cancel()
 
-		// Stop the worker pool
-		e.workerPool.stop()
+		// 2) Close newJobChan to unblock run loop when queue is empty
+		close(e.newJobChan)
 
-		// Wait for the run loop to exit, and the worker pool to stop
+		// 3) Wait for run loop to exit cleanly
 		<-e.runDone
+
+		// 4) Stop the worker pool and wait for it to finish
+		e.workerPool.stop()
 		<-e.workerPoolDone
 
-		// Close the remaining channels
-		close(e.newJobChan)
+		// 5) Close taskChan after workers have exited to avoid sends after close
 		close(e.taskChan)
 
 		e.log.Debug().Msg("Executor stopped")

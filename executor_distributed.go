@@ -77,11 +77,18 @@ func (e *distributedExecutor) Replace(job Job) error {
 		return errors.New("job not found")
 	}
 
-	// Preserve schedule position
+	// Preserve schedule position and update metrics
 	runner.mu.Lock()
-	job.NextExec = runner.job.NextExec
+	prev := runner.job
+	job.NextExec = prev.NextExec
 	runner.job = job
 	runner.mu.Unlock()
+
+	// Update metrics: jobs count unchanged, adjust tasks managed by delta
+	delta := len(job.Tasks) - len(prev.Tasks)
+	if delta != 0 {
+		e.metrics.updateTaskMetrics(0, delta, job.Cadence)
+	}
 
 	return nil
 }
