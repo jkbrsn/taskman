@@ -1,4 +1,5 @@
-// Package taskman provides a simple task scheduler with a worker pool.
+// Package taskman provides a task scheduler to execute externally defined jobs at regular
+// intervals. It supports two execution modes: a shared worker pool and per-job runners.
 package taskman
 
 import (
@@ -241,31 +242,31 @@ func WithLogger(logger zerolog.Logger) TMOption {
 	return func(tm *TaskManager) { tm.log = logger }
 }
 
-// WithMPMinWorkerCount (pool executor setting) sets the minimum number of workers for the
+// WithMPMinWorkerCount (ModePool setting) sets the minimum number of workers for the
 // TaskManager's worker pool. The default is the number of CPU cores found on the system at
 // runtime.
 func WithMPMinWorkerCount(count int) TMOption {
 	return func(tm *TaskManager) { tm.peMinWorkerCount = count }
 }
 
-// WithMPScaleInterval (pool executor setting) sets the interval at which the worker pool is scaled
+// WithMPScaleInterval (ModePool setting) sets the interval at which the worker pool is scaled
 // for the TaskManager. The default is 1 minute.
 func WithMPScaleInterval(interval time.Duration) TMOption {
 	return func(tm *TaskManager) { tm.peScaleInterval = interval }
 }
 
-// WithMDParallel (distributed executor setting) controls whether tasks inside each job execute in
+// WithMDParallel (ModeDistributed setting) controls whether tasks inside each job execute in
 // parallel (default: true).
 func WithMDParallel(parallel bool) TMOption {
 	return func(tm *TaskManager) { tm.deParallel = parallel }
 }
 
-// WithMDMaxParallel (distributed executor setting) sets max parallelism per job (0 = unlimited).
+// WithMDMaxParallel (ModeDistributed setting) sets max parallelism per job (0 = unlimited).
 func WithMDMaxParallel(n int) TMOption {
 	return func(tm *TaskManager) { tm.deMaxPar = n }
 }
 
-// WithMDCatchUpMax (distributed executor setting) sets how many missed cadences may run
+// WithMDCatchUpMax (ModeDistributed setting) sets how many missed cadences may run
 // back-to-back when behind (default: 1).
 func WithMDCatchUpMax(n int) TMOption {
 	return func(tm *TaskManager) { tm.deCatchUpMax = n }

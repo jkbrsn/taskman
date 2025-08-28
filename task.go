@@ -1,4 +1,3 @@
-// Package taskman provides a simple task scheduler with a worker pool.
 package taskman
 
 import (

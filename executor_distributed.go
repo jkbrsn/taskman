@@ -1,4 +1,3 @@
-// Package taskman provides a simple task scheduler with per-job runners.
 package taskman
 
 import (
