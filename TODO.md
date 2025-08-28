@@ -2,6 +2,8 @@
 
 ## TODO v0.4+
 
+- Improve unit tests
+  - In `manager_test.go`, we need to test both executor types
 - Add more functional options
   - An option to execute a job a select amount of times, e.g. a "one-hit" or "multi-hit" job, either with immediate or delayed execution
   - An option to instantly execute a job already in the queue, even though it has some time until next execution
