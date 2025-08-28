@@ -242,6 +242,11 @@ func WithLogger(logger zerolog.Logger) TMOption {
 	return func(tm *TaskManager) { tm.log = logger }
 }
 
+// WithMode sets the execution mode for the TaskManager. The default is ModePool.
+func WithMode(mode ExecMode) TMOption {
+	return func(tm *TaskManager) { tm.execMode = mode }
+}
+
 // WithMPMinWorkerCount (ModePool setting) sets the minimum number of workers for the
 // TaskManager's worker pool. The default is the number of CPU cores found on the system at
 // runtime.
