@@ -2,6 +2,7 @@
 
 ## TODO v0.4+
 
+- Update module name to reflect new name `taskman` (from `go-taskman`)
 - Improve unit tests
   - In `manager_test.go`, we need to test both executor types
 - Add more functional options
