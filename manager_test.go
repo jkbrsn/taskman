@@ -113,8 +113,9 @@ func TestScheduleFunc(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Assert that the job was added
-	// TODO: implement
+	// Assert that the func was added
+	assert.Equal(t, 1, manager.Metrics().ManagedJobs)
+	assert.Equal(t, 1, manager.Metrics().ManagedTasks)
 }
 
 func TestScheduleTask(t *testing.T) {
@@ -126,8 +127,9 @@ func TestScheduleTask(t *testing.T) {
 	_, err := manager.ScheduleTask(testTask, testTask.cadence)
 	require.NoError(t, err)
 
-	// Assert that the job was added
-	// TODO: implement
+	// Assert that the task was added
+	assert.Equal(t, 1, manager.Metrics().ManagedJobs)
+	assert.Equal(t, 1, manager.Metrics().ManagedTasks)
 }
 
 func TestScheduleTasks(t *testing.T) {
@@ -150,8 +152,9 @@ func TestScheduleTasks(t *testing.T) {
 	_, err := manager.ScheduleTasks(tasks, 100*time.Millisecond)
 	require.NoError(t, err, "Error scheduling tasks")
 
-	// Assert that the job was added
-	// TODO: implement
+	// Assert that the tasks were added
+	assert.Equal(t, 1, manager.Metrics().ManagedJobs)
+	assert.Equal(t, 2, manager.Metrics().ManagedTasks)
 }
 
 func TestScheduleJob(t *testing.T) {
@@ -166,7 +169,8 @@ func TestScheduleJob(t *testing.T) {
 	t.Run("valid scheduling", func(t *testing.T) {
 		assert.NoError(t, manager.ScheduleJob(job))
 		// Assert that the job was added
-		// TODO: implement
+		assert.Equal(t, 1, manager.Metrics().ManagedJobs)
+		assert.Equal(t, 2, manager.Metrics().ManagedTasks)
 	})
 
 	t.Run("duplicate job", func(t *testing.T) {
@@ -181,17 +185,19 @@ func TestRemoveJob(t *testing.T) {
 
 	job := getMockedJob(2, "someJob", 100*time.Millisecond, 100*time.Millisecond)
 	err := manager.ScheduleJob(job)
-	assert.Nil(t, err, "Error adding job")
+	assert.NoError(t, err, "Error adding job")
 
 	// Assert that the job was added
-	// TODO: implement
+	assert.Equal(t, 1, manager.Metrics().ManagedJobs)
+	assert.Equal(t, 2, manager.Metrics().ManagedTasks)
 
 	// Remove the job
 	err = manager.RemoveJob(job.ID)
-	assert.Nil(t, err, "Error removing job")
+	assert.NoError(t, err, "Error removing job")
 
 	// Assert that the job was removed
-	// TODO: implement
+	assert.Equal(t, 0, manager.Metrics().ManagedJobs)
+	assert.Equal(t, 0, manager.Metrics().ManagedTasks)
 
 	// Try removing the job once more
 	err = manager.RemoveJob(job.ID)
@@ -206,20 +212,28 @@ func TestReplaceJob(t *testing.T) {
 	// Add a job
 	firstJob := getMockedJob(2, "aJobID", 100*time.Millisecond, 100*time.Millisecond)
 	err := manager.ScheduleJob(firstJob)
-	assert.Nil(t, err, "Error adding job")
+	assert.NoError(t, err, "Error adding job")
 	// Assert job added
-	// TODO: implement
+	assert.Equal(t, 1, manager.Metrics().ManagedJobs)
+	assert.Equal(t, 2, manager.Metrics().ManagedTasks)
 
 	// Replace the first job
 	secondJob := getMockedJob(4, "aJobID", 50*time.Millisecond, 100*time.Millisecond)
 	err = manager.ReplaceJob(secondJob)
-	assert.Nil(t, err, "Error replacing job")
+	assert.NoError(t, err, "Error replacing job")
 	// Assert that the job was replaced in the queue
-	// TODO: implement
+	assert.Equal(t, 1, manager.Metrics().ManagedJobs)
+	assert.Equal(t, 4, manager.Metrics().ManagedTasks)
+	// Check job properties
+	job, err := manager.exec.Job("aJobID")
+	assert.NoError(t, err)
 	// The queue job should retain the index and NextExec time of the first job
-	// TODO: implement
+	assert.Equal(t, firstJob.index, job.index)
+	assert.Equal(t, firstJob.NextExec, job.NextExec)
 	// The queue job should have the ID, cadence and tasks of the new (second) job
-	// TODO: implement
+	assert.Equal(t, secondJob.ID, job.ID)
+	assert.Equal(t, secondJob.Cadence, job.Cadence)
+	assert.Equal(t, secondJob.Tasks, job.Tasks)
 
 	// Try to replace a non-existing job
 	thirdJob := getMockedJob(2, "anotherJobID", 10*time.Millisecond, 100*time.Millisecond)
