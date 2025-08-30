@@ -8,17 +8,17 @@ import (
 	uatomic "go.uber.org/atomic"
 )
 
-// TaskManagerMetrics stores metrics about the task manager.
+// TaskManagerMetrics holds metrics about various aspects of the task manager.
 type TaskManagerMetrics struct {
 	// Jobs
 	ManagedJobs   int     // Total number of jobs in the queue
 	JobsPerSecond float32 // Number of jobs executed per second
 
-	// Task execution
+	// Tasks
 	ManagedTasks         int           // Total number of tasks in the queue
+	TasksPerSecond       float32       // Number of tasks executed per second
 	TaskAverageExecTime  time.Duration // Average execution time of tasks
 	TasksTotalExecutions int           // Total number of tasks executed
-	TasksPerSecond       float32       // Number of tasks executed per second
 
 	// Worker pool
 	PoolMetrics *PoolMetrics
@@ -35,11 +35,9 @@ type TaskManagerMetrics struct {
 	// WorkerAverageLifetime
 }
 
-// PoolMetrics stores metrics about the worker pool.
+// PoolMetrics holds worker pool metrics.
 type PoolMetrics struct {
-	WidestJobWidth int // Widest job in the queue in terms of number of tasks
-
-	// Worker pool
+	WidestJobWidth      int     // Widest job in the queue in terms of number of tasks
 	WorkerCountTarget   int     // Target number of workers
 	WorkerScalingEvents int     // Number of worker scaling events since start
 	WorkerUtilization   float32 // Utilization of workers
@@ -49,13 +47,13 @@ type PoolMetrics struct {
 
 // managerMetrics stores internal metrics about the task manager.
 type managerMetrics struct {
+	jobsManaged   atomic.Int64    // Total number of jobs managed
+	jobsPerSecond uatomic.Float32 // Number of jobs executed per second
+
 	tasksManaged        atomic.Int64     // Total number of tasks managed
 	tasksPerSecond      uatomic.Float32  // Number of tasks executed per second
 	averageExecTime     uatomic.Duration // Average execution time of tasks
 	totalTaskExecutions atomic.Int64     // Total number of tasks executed
-
-	jobsManaged   atomic.Int64    // Total number of jobs managed
-	jobsPerSecond uatomic.Float32 // Number of jobs executed per second
 
 	done <-chan struct{}
 }

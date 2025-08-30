@@ -35,10 +35,7 @@ type MockTask struct {
 func (mt MockTask) Execute() error {
 	testLogger.Debug().Msgf("Executing MockTask with ID: %s", mt.ID)
 	if mt.executeFunc != nil {
-		err := mt.executeFunc()
-		if err != nil {
-			return err
-		}
+		return mt.executeFunc()
 	}
 	return nil
 }

@@ -318,6 +318,7 @@ func getPoolExecutor() executor {
 		2,
 		10,
 		time.Minute,
+		defaultPoolScaleCfg(),
 	)
 }
 
