@@ -36,7 +36,7 @@ test:
 
 bench:
 	@echo "==> Running benchmarks..."
-	@go test -count=$(N) $(TEST_FLAGS) -bench=. -benchmem -benchtime=1s -run=^$ -v ./...
+	@go test -count=$(N) -bench=. -benchmem -benchtime=1s -run=^$ -v
 
 fmt:
 	@echo "==> Running formatter (go fmt)..."
