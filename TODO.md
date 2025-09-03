@@ -1,10 +1,10 @@
 # Plans for the go-taskman package
 
-## TODO v0.4+
+## TODO v0.5.0
 
 - Update module name to reflect new name `taskman` (from `go-taskman`)
 - Improve unit tests
-  - In `manager_test.go`, we need to test both executor types
+  - Add test suite setup to `manager_test.go`, to allow for testing of both executor types
 - Add more functional options
   - An option to execute a job a select amount of times, e.g. a "one-hit" or "multi-hit" job, either with immediate or delayed execution
   - An option to instantly execute a job already in the queue, even though it has some time until next execution
@@ -15,6 +15,7 @@
 - Metrics
   - Consider adding metrics for channel buffer sizes and queue sizes
   - Consider ingesting executorMetrics updates via channel to avoid locks
+  - Consider exchanging atomic vars for a mutex protected state struct
 
 # feature ideas
 
