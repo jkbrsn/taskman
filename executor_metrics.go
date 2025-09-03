@@ -63,6 +63,20 @@ func (m *executorMetrics) consumeOneExecTime(execTime time.Duration) {
 	m.totalTaskExecutions.Add(1)
 }
 
+// updateCadence updates the metrics for a change in cadence only. If called with
+// newTaskCount != 0, the metrics will not be updated correctly.
+func (m *executorMetrics) updateCadence(newTaskCount int, old, new time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	tasksPerSecondDelta := float32(newTaskCount) * (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
+	jobsPerSecondDelta := (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
+
+	// Store updated values
+	m.tasksPerSecond.Add(tasksPerSecondDelta)
+	m.jobsPerSecond.Add(jobsPerSecondDelta)
+}
+
 // updateMetrics updates the metrics. The input deltas correspond to number of tasks or jobs added
 // or removed, and cadence is the cadence of the jobs and tasks affected by the change.
 func (m *executorMetrics) updateMetrics(jobDelta, taskDelta int, cadence time.Duration) {
@@ -93,19 +107,6 @@ func (m *executorMetrics) updateMetrics(jobDelta, taskDelta int, cadence time.Du
 	m.tasksManaged.Add(int64(taskDelta))
 	m.jobsPerSecond.Add(jobsPerSecond)
 	m.jobsManaged.Add(int64(jobDelta))
-}
-
-// updateCadence updates the metrics for a change in cadence only.
-func (m *executorMetrics) updateCadence(newTaskCount int, old, new time.Duration) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	tasksPerSecondDelta := float32(newTaskCount) * (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
-	jobsPerSecondDelta := (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
-
-	// Store updated values
-	m.tasksPerSecond.Add(tasksPerSecondDelta)
-	m.jobsPerSecond.Add(jobsPerSecondDelta)
 }
 
 // newExecutorMetrics creates a new executor metrics instance.

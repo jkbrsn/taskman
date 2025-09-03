@@ -136,6 +136,16 @@ func (e *distributedExecutor) Schedule(job Job) error {
 		return errors.New("duplicate job ID")
 	}
 
+	e.log.Debug().Msgf(
+		"Scheduling job with %d tasks with ID '%s' and cadence %v",
+		len(job.Tasks), job.ID, job.Cadence,
+	)
+
+	// Set NextExec to now if it is not set
+	if job.NextExec.IsZero() {
+		job.NextExec = time.Now().Add(job.Cadence)
+	}
+
 	rCtx, rCancel := context.WithCancel(e.ctx)
 	runner := &jobRunner{
 		job:        job,

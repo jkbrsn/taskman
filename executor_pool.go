@@ -406,18 +406,23 @@ func (e *poolExecutor) Schedule(job Job) error {
 		return errors.New("invalid job: duplicate job ID")
 	}
 
+	// Check executor context state
+	select {
+	case <-e.ctx.Done():
+		// If the executor is stopped, do not continue adding the job
+		return errors.New("executor context is done")
+	default:
+		// Pass through if the executor is running
+	}
+
 	e.log.Debug().Msgf(
 		"Scheduling job with %d tasks with ID '%s' and cadence %v",
 		len(job.Tasks), job.ID, job.Cadence,
 	)
 
-	// Check task manager state
-	select {
-	case <-e.ctx.Done():
-		// If the manager is stopped, do not continue adding the job
-		return errors.New("task manager is stopped")
-	default:
-		// Pass through if the manager is running
+	// Set NextExec to now if it is not set
+	if job.NextExec.IsZero() {
+		job.NextExec = time.Now().Add(job.Cadence)
 	}
 
 	// Update task metrics
@@ -433,11 +438,11 @@ func (e *poolExecutor) Schedule(job Job) error {
 	// Push the job to the queue
 	heap.Push(&e.jobQueue, &job)
 
-	// Signal the task manager to check for new tasks
+	// Signal the executor to check for new tasks
 	select {
 	case <-e.ctx.Done():
-		// Do nothing if the manager is stopped
-		return errors.New("task manager is stopped")
+		// Do nothing if the executor is stopped
+		return errors.New("executor context is done")
 	default:
 		select {
 		case e.newJobChan <- true:
