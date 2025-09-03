@@ -130,8 +130,8 @@ func (tm *TaskManager) ScheduleJob(job Job) error {
 	return tm.exec.Schedule(job)
 }
 
-// ScheduleTask takes a Task and adds it to the TaskManager in a Job. Creates and returns a
-// randomized ID, used to identify the Job within the task manager.
+// ScheduleTask schedules a task in a newly created Job. A randomized ID is added to the Job and
+// returned.
 func (tm *TaskManager) ScheduleTask(task Task, cadence time.Duration) (string, error) {
 	jobID := xid.New().String()
 
@@ -145,8 +145,8 @@ func (tm *TaskManager) ScheduleTask(task Task, cadence time.Duration) (string, e
 	return jobID, tm.ScheduleJob(job)
 }
 
-// ScheduleTasks takes a slice of Task and adds them to the TaskManager in a Job.
-// Creates and returns a randomized ID, used to identify the Job within the task manager.
+// ScheduleTasks schedules a slice of tasks in a newly created Job. A randomized ID is added to the
+// Job and returned.
 func (tm *TaskManager) ScheduleTasks(tasks []Task, cadence time.Duration) (string, error) {
 	jobID := xid.New().String()
 
