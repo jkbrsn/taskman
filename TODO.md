@@ -3,6 +3,9 @@
 ## TODO v0.5.0
 
 - Update module name to reflect new name `taskman` (from `go-taskman`)
+- CI/CD
+  - Add GitHub Actions CI/CD pipeline
+  - Add GitHub Actions release pipeline
 - Improve unit tests
   - Add test suite setup to `manager_test.go`, to allow for testing of both executor types
 - Add more functional options
