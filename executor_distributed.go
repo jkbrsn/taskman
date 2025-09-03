@@ -17,7 +17,7 @@ func safeExecuteTask(
 	jobID string,
 	t Task,
 	errCh chan<- error,
-	metrics *managerMetrics,
+	metrics *executorMetrics,
 ) {
 	if ctx.Err() != nil {
 		return
@@ -49,7 +49,7 @@ type distributedExecutor struct {
 	runners threadsafe.Map[string, *jobRunner] // jobID -> runner
 
 	errCh   chan error
-	metrics *managerMetrics
+	metrics *executorMetrics
 
 	// Configurable options
 	catchUpMax int  // max immediate catch-ups per tick when behind schedule
@@ -93,7 +93,7 @@ func (e *distributedExecutor) Remove(jobID string) error {
 	runner.cancel()
 	runner.wg.Wait()
 
-	e.metrics.updateTaskMetrics(-1, -len(runner.job.Tasks), runner.job.Cadence)
+	e.metrics.updateMetrics(-1, -len(runner.job.Tasks), runner.job.Cadence)
 	return nil
 }
 
@@ -114,7 +114,7 @@ func (e *distributedExecutor) Replace(job Job) error {
 	// Update metrics: jobs count unchanged, adjust tasks managed by delta
 	delta := len(job.Tasks) - len(prev.Tasks)
 	if delta != 0 {
-		e.metrics.updateTaskMetrics(0, delta, job.Cadence)
+		e.metrics.updateMetrics(0, delta, job.Cadence)
 	}
 
 	return nil
@@ -143,14 +143,23 @@ func (e *distributedExecutor) Schedule(job Job) error {
 	go runner.loop(e.errCh, e.metrics)
 
 	e.runners.Set(job.ID, runner)
-	e.metrics.updateTaskMetrics(1, len(job.Tasks), job.Cadence)
+	e.metrics.updateMetrics(1, len(job.Tasks), job.Cadence)
 
 	return nil
 }
 
 // Start is a no-op for the distributed executor, as each job is started by its runner when
 // scheduled.
-func (*distributedExecutor) Start() {}
+func (e *distributedExecutor) Start() {
+	// Metrics: reuse provided metrics but validate context
+	if e.metrics == nil {
+		e.metrics = newExecutorMetrics()
+	} else if e.metrics.ctx == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		e.metrics.ctx = ctx
+		e.metrics.cancel = cancel
+	}
+}
 
 // Stop stops the distributed executor by sending a cancel signal to all runners.
 func (e *distributedExecutor) Stop() {
@@ -161,6 +170,9 @@ func (e *distributedExecutor) Stop() {
 		value.wg.Wait()
 		return true
 	})
+
+	// Stop metrics
+	e.metrics.cancel()
 }
 
 // jobRunner is an implementation of job runner that runs tasks in a separate goroutine.
@@ -177,7 +189,7 @@ type jobRunner struct {
 	catchUpMax int  // max immediate catch-ups per tick when behind
 }
 
-func (r *jobRunner) execute(errCh chan<- error, metrics *managerMetrics) {
+func (r *jobRunner) execute(errCh chan<- error, metrics *executorMetrics) {
 	if r.parallel {
 		r.runParallel(errCh, metrics)
 		return
@@ -192,7 +204,7 @@ func (r *jobRunner) execute(errCh chan<- error, metrics *managerMetrics) {
 // cadence. If the runner fell behind schedule (e.g., the previous run took longer than
 // one cadence), we allow it to "catch up" by at most catchUpMax skipped periods to avoid
 // a long backlog of immediate executions.
-func (r *jobRunner) loop(errCh chan<- error, metrics *managerMetrics) {
+func (r *jobRunner) loop(errCh chan<- error, metrics *executorMetrics) {
 	defer r.wg.Done()
 
 	// Initialize the first fire time from the job's schedule.
@@ -250,7 +262,7 @@ func (r *jobRunner) loop(errCh chan<- error, metrics *managerMetrics) {
 }
 
 // runSequential runs the job sequentially.
-func (r *jobRunner) runSequential(errCh chan<- error, metrics *managerMetrics) {
+func (r *jobRunner) runSequential(errCh chan<- error, metrics *executorMetrics) {
 	r.mu.RLock()
 	tasks := r.job.Tasks
 	jobID := r.job.ID
@@ -262,7 +274,7 @@ func (r *jobRunner) runSequential(errCh chan<- error, metrics *managerMetrics) {
 }
 
 // runParallel runs the job in parallel.
-func (r *jobRunner) runParallel(errCh chan<- error, metrics *managerMetrics) {
+func (r *jobRunner) runParallel(errCh chan<- error, metrics *executorMetrics) {
 	var wg sync.WaitGroup
 	var sem chan struct{}
 
@@ -311,7 +323,7 @@ func newDistributedExecutor(
 	parent context.Context,
 	logger zerolog.Logger,
 	errCh chan error,
-	metrics *managerMetrics,
+	metrics *executorMetrics,
 	catchUpMax int,
 	parallel bool,
 	maxPar int,

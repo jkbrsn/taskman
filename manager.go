@@ -37,6 +37,33 @@ type ExecMode int
 // TMOption is a functional option for the TaskManager struct.
 type TMOption func(*TaskManager)
 
+// TaskManagerMetrics holds metrics about various aspects of the task manager.
+type TaskManagerMetrics struct {
+	// Jobs
+	ManagedJobs   int     // Total number of jobs in the queue
+	JobsPerSecond float32 // Number of jobs executed per second
+
+	// Tasks
+	ManagedTasks         int           // Total number of tasks in the queue
+	TasksPerSecond       float32       // Number of tasks executed per second
+	TaskAverageExecTime  time.Duration // Average execution time of tasks
+	TasksTotalExecutions int           // Total number of tasks executed
+
+	// Worker pool
+	PoolMetrics *PoolMetrics
+
+	// TODO: consider adding:
+	// JobsPerSecond float32
+	// JobSuccessRate
+	// JobLatency
+	// JobBacklog
+	// TaskSuccessRate
+	// TaskLatency
+	// TaskQueueWait
+	// TaskBacklogLength
+	// WorkerAverageLifetime
+}
+
 // TaskManager manages task scheduling and execution. Tasks are scheduled within Jobs, and the
 // manager dispatches scheduled jobs to a worker pool for execution.
 type TaskManager struct {
@@ -46,8 +73,8 @@ type TaskManager struct {
 	cancel context.CancelFunc
 
 	// Shared
-	metrics   *managerMetrics // Metrics for the task manager
-	errorChan chan error      // Channel to receive errors from the worker pool
+	metrics   *executorMetrics // Metrics for the task manager
+	errorChan chan error       // Channel to receive errors from the worker pool
 
 	// Execution
 	exec     executor
@@ -200,7 +227,7 @@ func New(opts ...TMOption) *TaskManager {
 	// deMaxPar: 0 means unlimited; keep as zero unless explicitly set
 
 	tm.errorChan = make(chan error, tm.channelBufferSize)
-	tm.metrics = &managerMetrics{}
+	tm.metrics = newExecutorMetrics()
 
 	switch tm.execMode {
 	case ModeDistributed:

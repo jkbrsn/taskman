@@ -217,7 +217,7 @@ func TestExecutor(t *testing.T) {
 				context.Background(),
 				zerolog.Nop(),
 				make(chan error),
-				&managerMetrics{},
+				&executorMetrics{},
 			)
 		}
 		runSliceTestSuite(t, &executorTestSuite{newExec: newExec})
@@ -314,7 +314,7 @@ func getPoolExecutor() executor {
 		context.Background(),
 		zerolog.Nop(),
 		make(chan error, defaultBufferSize),
-		&managerMetrics{},
+		&executorMetrics{},
 		2,
 		10,
 		time.Minute,
@@ -327,7 +327,7 @@ func getDistExecutor() executor {
 		context.Background(),
 		zerolog.Nop(),
 		make(chan error, defaultBufferSize),
-		&managerMetrics{},
+		&executorMetrics{},
 		1,
 		true,
 		0,

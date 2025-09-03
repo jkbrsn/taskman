@@ -1,6 +1,7 @@
 package taskman
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -8,11 +9,11 @@ import (
 )
 
 func TestUpdateMetrics(t *testing.T) {
-	doneChan := make(chan struct{})
-	metrics := &managerMetrics{
-		done: doneChan,
+	ctx, cancel := context.WithCancel(t.Context())
+	metrics := &executorMetrics{
+		ctx: ctx,
 	}
-	defer func() { close(doneChan) }()
+	defer cancel()
 
 	// Initial state
 	initialTasksManaged := metrics.tasksManaged.Load()
@@ -21,7 +22,7 @@ func TestUpdateMetrics(t *testing.T) {
 	// Update stats with tasks and cadence producing 2 tasks per second
 	additionalTasks := 10
 	cadence := 5 * time.Second
-	metrics.updateTaskMetrics(1, additionalTasks, cadence)
+	metrics.updateMetrics(1, additionalTasks, cadence)
 
 	// Verify the tasksInQueue is updated correctly
 	expectedTasksTotal := initialTasksManaged + int64(additionalTasks)
@@ -41,7 +42,7 @@ func TestUpdateMetrics(t *testing.T) {
 	// Update stats with another set of tasks, this time producing 5 tasks per second
 	additionalTasks = 10
 	cadence = 2 * time.Second
-	metrics.updateTaskMetrics(1, additionalTasks, cadence)
+	metrics.updateMetrics(1, additionalTasks, cadence)
 
 	// Verify that tasksInQueue is updated correctly
 	expectedTasksTotal += int64(additionalTasks)

@@ -42,8 +42,8 @@ type poolExecutor struct {
 	scaleInterval     time.Duration // Interval for automatic scaling of the worker pool
 
 	// Metrics
-	metrics     *managerMetrics // Metrics for the overall task manager
-	maxJobWidth atomic.Int32    // Widest job in the queue in terms of number of tasks
+	metrics     *executorMetrics // Metrics for the overall task manager
+	maxJobWidth atomic.Int32     // Widest job in the queue in terms of number of tasks
 }
 
 // periodicWorkerScaling scales the worker pool at regular intervals, based on the state of the
@@ -331,7 +331,7 @@ func (e *poolExecutor) Remove(jobID string) error {
 		e.maxJobWidth.Store(int32(newWidestJob))
 	}
 	// Update the task metrics with a negative task count to signify removal
-	e.metrics.updateTaskMetrics(-1, -taskCount, job.Cadence)
+	e.metrics.updateMetrics(-1, -taskCount, job.Cadence)
 
 	// Scale worker pool if needed
 	e.scaleWorkerPool(0)
@@ -365,7 +365,7 @@ func (e *poolExecutor) Replace(job Job) error {
 	deltaTasks := newTasks - oldTasks
 	if deltaTasks != 0 {
 		// Jobs managed unchanged (replace), but tasks managed changes by delta
-		e.metrics.updateTaskMetrics(0, deltaTasks, job.Cadence)
+		e.metrics.updateMetrics(0, deltaTasks, job.Cadence)
 	}
 	currentMax := int(e.maxJobWidth.Load())
 	if newTasks > currentMax {
@@ -416,7 +416,7 @@ func (e *poolExecutor) Schedule(job Job) error {
 	if taskCount > int(e.maxJobWidth.Load()) {
 		e.maxJobWidth.Store(int32(taskCount))
 	}
-	e.metrics.updateTaskMetrics(1, taskCount, job.Cadence)
+	e.metrics.updateMetrics(1, taskCount, job.Cadence)
 
 	// Scale worker pool if needed
 	e.scaleWorkerPool(taskCount)
@@ -443,9 +443,13 @@ func (e *poolExecutor) Schedule(job Job) error {
 
 // Start starts the executor by setting up the job queue, channels, and worker pool.
 func (e *poolExecutor) Start() {
-	// Metrics: reuse provided metrics and set done channel
+	// Metrics: reuse provided metrics but validate context
 	if e.metrics == nil {
-		e.metrics = &managerMetrics{}
+		e.metrics = newExecutorMetrics()
+	} else if e.metrics.ctx == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		e.metrics.ctx = ctx
+		e.metrics.cancel = cancel
 	}
 
 	// Job queue
@@ -479,9 +483,6 @@ func (e *poolExecutor) Start() {
 	e.workerPool.downScaleMinInterval = 100 * time.Millisecond
 	e.poolScaler.workerPool = e.workerPool
 
-	// Now that worker pool is created, tie metrics done channel to workerPoolDone
-	e.metrics.done = e.workerPoolDone
-
 	go e.metrics.consumeExecTime(e.workerPool.execTimeChan)
 	go e.run()
 	go e.periodicWorkerScaling()
@@ -509,7 +510,10 @@ func (e *poolExecutor) Stop() {
 		e.workerPool.stop()
 		<-e.workerPoolDone
 
-		// 5) Close taskChan after workers have exited to avoid sends after close
+		// 5) Stop metrics
+		e.metrics.cancel()
+
+		// 6) Close taskChan after workers have exited to avoid sends after close
 		close(e.taskChan)
 
 		e.log.Debug().Msg("Executor stopped")
@@ -521,7 +525,7 @@ func newPoolExecutor(
 	parentCtx context.Context,
 	logger zerolog.Logger,
 	errorChan chan error,
-	metrics *managerMetrics,
+	metrics *executorMetrics,
 	channelBufferSize int,
 	minWorkerCount int,
 	scaleInterval time.Duration,
