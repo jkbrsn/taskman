@@ -99,6 +99,10 @@ func (e *distributedExecutor) Remove(jobID string) error {
 
 // Replace replaces a job.
 func (e *distributedExecutor) Replace(job Job) error {
+	if err := job.Validate(); err != nil {
+		return fmt.Errorf("invalid job: %w", err)
+	}
+
 	runner, ok := e.runners.Get(job.ID)
 	if !ok {
 		return errors.New("job not found")
@@ -115,6 +119,8 @@ func (e *distributedExecutor) Replace(job Job) error {
 	delta := len(job.Tasks) - len(prev.Tasks)
 	if delta != 0 {
 		e.metrics.updateMetrics(0, delta, job.Cadence)
+	} else if prev.Cadence != job.Cadence {
+		e.metrics.updateCadence(len(job.Tasks), prev.Cadence, job.Cadence)
 	}
 
 	return nil

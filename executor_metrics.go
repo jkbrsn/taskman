@@ -2,7 +2,6 @@ package taskman
 
 import (
 	"context"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -85,34 +84,28 @@ func (m *executorMetrics) updateMetrics(jobDelta, taskDelta int, cadence time.Du
 		return
 	}
 
-	// Calculate the new tasks per second
-	tasksPerSecond := eventsPerSecond(taskDelta, cadence)
-	jobsPerSecond := eventsPerSecond(jobDelta, cadence)
-
-	// Update the tasks per second metric base on a weighted average
-	newTasksPerSecond := (tasksPerSecond*float32(taskDelta) +
-		m.tasksPerSecond.Load()*float32(currentTaskCount)) /
-		float32(newTaskCount)
-
-	// Update the jobs per second metric base on a weighted average
-	newJobsPerSecond := (jobsPerSecond*float32(jobDelta) +
-		m.jobsPerSecond.Load()*float32(currentJobCount)) /
-		float32(newJobCount)
+	// Calculate execution per second contributions
+	tasksPerSecond := float32(taskDelta) / float32(cadence.Seconds())
+	jobsPerSecond := float32(jobDelta) / float32(cadence.Seconds())
 
 	// Store updated values
-	m.tasksPerSecond.Store(newTasksPerSecond)
+	m.tasksPerSecond.Add(tasksPerSecond)
 	m.tasksManaged.Add(int64(taskDelta))
-	m.jobsPerSecond.Store(newJobsPerSecond)
+	m.jobsPerSecond.Add(jobsPerSecond)
 	m.jobsManaged.Add(int64(jobDelta))
 }
 
-// eventsPerSecond calculates the number of events executed per second.
-func eventsPerSecond(n int, cadence time.Duration) float32 {
-	if cadence == 0 {
-		return 0
-	}
-	events := math.Abs(float64(n))
-	return float32(events) / float32(cadence.Seconds())
+// updateCadence updates the metrics for a change in cadence only.
+func (m *executorMetrics) updateCadence(newTaskCount int, old, new time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	tasksPerSecondDelta := float32(newTaskCount) * (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
+	jobsPerSecondDelta := (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
+
+	// Store updated values
+	m.tasksPerSecond.Add(tasksPerSecondDelta)
+	m.jobsPerSecond.Add(jobsPerSecondDelta)
 }
 
 // newExecutorMetrics creates a new executor metrics instance.

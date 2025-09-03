@@ -341,6 +341,10 @@ func (e *poolExecutor) Remove(jobID string) error {
 
 // Replace replaces a job in the queue.
 func (e *poolExecutor) Replace(job Job) error {
+	if err := job.Validate(); err != nil {
+		return fmt.Errorf("invalid job: %w", err)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -359,14 +363,18 @@ func (e *poolExecutor) Replace(job Job) error {
 	// Preserve heap invariants if ordering-related fields ever change
 	heap.Fix(&e.jobQueue, job.index)
 
-	// Metrics and widest-job updates
+	// Executor metrics updates
 	oldTasks := len(oldJob.Tasks)
 	newTasks := len(job.Tasks)
 	deltaTasks := newTasks - oldTasks
 	if deltaTasks != 0 {
 		// Jobs managed unchanged (replace), but tasks managed changes by delta
 		e.metrics.updateMetrics(0, deltaTasks, job.Cadence)
+	} else if oldJob.Cadence != job.Cadence {
+		e.metrics.updateCadence(newTasks, oldJob.Cadence, job.Cadence)
 	}
+
+	// Widest-job updates
 	currentMax := int(e.maxJobWidth.Load())
 	if newTasks > currentMax {
 		e.maxJobWidth.Store(int32(newTasks))
@@ -386,15 +394,16 @@ func (e *poolExecutor) Replace(job Job) error {
 
 // Schedule schedules a job for execution.
 func (e *poolExecutor) Schedule(job Job) error {
+	if err := job.Validate(); err != nil {
+		return fmt.Errorf("invalid job: %w", err)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	// Validate job ID duplicity and job requirements
 	if _, ok := e.jobQueue.JobInQueue(job.ID); ok == nil {
 		return errors.New("invalid job: duplicate job ID")
-	}
-	if err := job.Validate(); err != nil {
-		return fmt.Errorf("invalid job: %w", err)
 	}
 
 	e.log.Debug().Msgf(
