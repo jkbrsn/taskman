@@ -187,6 +187,91 @@ func (s *executorTestSuite) TestExecutorConcurrentExecution(t *testing.T) {
 		"Expected %d jobs scheduled, got %d", expectedJobs, exec.Metrics().ManagedJobs)
 }
 
+// NextExec variants coverage for executors
+func (s *executorTestSuite) TestExecutorNextExecVariants(t *testing.T) {
+	exec := s.newExec()
+	defer exec.Stop()
+	exec.Start()
+
+	t.Run("Zero NextExec sets to now+cadence", func(t *testing.T) {
+		cadence := 40 * time.Millisecond
+		job := Job{
+			ID:       "next-zero",
+			Cadence:  cadence,
+			NextExec: time.Time{},
+			Tasks:    []Task{simpleTask{func() error { return nil }}},
+		}
+		start := time.Now()
+		assert.NoError(t, exec.Schedule(job))
+		qJob, err := exec.Job(job.ID)
+		assert.NoError(t, err)
+		delay := qJob.NextExec.Sub(start)
+		assert.GreaterOrEqual(t, int64(delay), int64(cadence))
+		assert.LessOrEqual(t, delay, cadence+50*time.Millisecond)
+		assert.NoError(t, exec.Remove(job.ID))
+	})
+
+	t.Run("Past within cadence executes immediately", func(t *testing.T) {
+		cadence := 10 * time.Millisecond
+		done := make(chan struct{}, 1)
+		job := Job{
+			ID:       "next-past-within",
+			Cadence:  cadence,
+			NextExec: time.Now().Add(-cadence / 2),
+			Tasks:    []Task{simpleTask{func() error { done <- struct{}{}; return nil }}},
+		}
+		assert.NoError(t, exec.Schedule(job))
+		select {
+		case <-done:
+			// ok
+		case <-time.After(cadence):
+			t.Fatal("Job did not execute immediately")
+		}
+		assert.NoError(t, exec.Remove(job.ID))
+	})
+
+	t.Run("Past more than cadence rejected", func(t *testing.T) {
+		cadence := 10 * time.Millisecond
+		job := Job{
+			ID:       "next-too-old",
+			Cadence:  cadence,
+			NextExec: time.Now().Add(-2 * cadence),
+			Tasks:    []Task{simpleTask{func() error { return nil }}},
+		}
+		err := exec.Schedule(job)
+		assert.Error(t, err)
+	})
+
+	t.Run("Delayed future execution", func(t *testing.T) {
+		// Use a channel to receive execution times
+		executionTimes := make(chan time.Time, 1)
+		start := time.Now()
+		execDelay := 10 * time.Millisecond
+		job := Job{
+			ID:       "test-instant-execution-4",
+			Cadence:  5 * time.Millisecond,
+			NextExec: time.Now().Add(execDelay),
+			Tasks: []Task{MockTask{ID: "task1", executeFunc: func() error {
+				executionTimes <- time.Now()
+				return nil
+			}}},
+		}
+		err := exec.Schedule(job)
+		assert.NoError(t, err, "Expected no error scheduling job")
+
+		// Verify the task executed at the correct time
+		execTime := <-executionTimes
+		elapsed := execTime.Sub(start)
+		assert.GreaterOrEqual(
+			t,
+			elapsed,
+			execDelay,
+			"Task executed after %v, expected around 25ms",
+			elapsed,
+		)
+	})
+}
+
 // runExecutorTestSuite runs all tests in the suite.
 func runExecutorTestSuite(t *testing.T, s *executorTestSuite) {
 	t.Run("Schedule", s.TestExecutorSchedule)
@@ -194,6 +279,7 @@ func runExecutorTestSuite(t *testing.T, s *executorTestSuite) {
 	t.Run("Replace", s.TestExecutorReplace)
 	t.Run("ConcurrentSchedule", s.TestExecutorConcurrentSchedule)
 	t.Run("ConcurrentExecution", s.TestExecutorConcurrentExecution)
+	t.Run("NextExecVariants", s.TestExecutorNextExecVariants)
 }
 
 func TestExecutor(t *testing.T) {
