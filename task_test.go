@@ -42,7 +42,7 @@ func TestJobValidate(t *testing.T) {
 			NextExec: time.Time{},
 			Tasks:    []Task{MockTask{ID: "task1"}},
 		}
-		assert.Error(t, invalidJobZeroNextExec.Validate(),
-			"Expected error for job with zero NextExec time")
+		assert.NoError(t, invalidJobZeroNextExec.Validate(),
+			"Expected no error when NextExec is zero (unset)")
 	})
 }

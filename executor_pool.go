@@ -42,8 +42,8 @@ type poolExecutor struct {
 	scaleInterval     time.Duration // Interval for automatic scaling of the worker pool
 
 	// Metrics
-	metrics     *managerMetrics // Metrics for the overall task manager
-	maxJobWidth atomic.Int32    // Widest job in the queue in terms of number of tasks
+	metrics     *executorMetrics // Metrics for the overall task manager
+	maxJobWidth atomic.Int32     // Widest job in the queue in terms of number of tasks
 }
 
 // periodicWorkerScaling scales the worker pool at regular intervals, based on the state of the
@@ -331,7 +331,7 @@ func (e *poolExecutor) Remove(jobID string) error {
 		e.maxJobWidth.Store(int32(newWidestJob))
 	}
 	// Update the task metrics with a negative task count to signify removal
-	e.metrics.updateTaskMetrics(-1, -taskCount, job.Cadence)
+	e.metrics.updateMetrics(-1, -taskCount, job.Cadence)
 
 	// Scale worker pool if needed
 	e.scaleWorkerPool(0)
@@ -341,6 +341,10 @@ func (e *poolExecutor) Remove(jobID string) error {
 
 // Replace replaces a job in the queue.
 func (e *poolExecutor) Replace(job Job) error {
+	if err := job.Validate(); err != nil {
+		return fmt.Errorf("invalid job: %w", err)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -359,14 +363,18 @@ func (e *poolExecutor) Replace(job Job) error {
 	// Preserve heap invariants if ordering-related fields ever change
 	heap.Fix(&e.jobQueue, job.index)
 
-	// Metrics and widest-job updates
+	// Executor metrics updates
 	oldTasks := len(oldJob.Tasks)
 	newTasks := len(job.Tasks)
 	deltaTasks := newTasks - oldTasks
 	if deltaTasks != 0 {
 		// Jobs managed unchanged (replace), but tasks managed changes by delta
-		e.metrics.updateTaskMetrics(0, deltaTasks, job.Cadence)
+		e.metrics.updateMetrics(0, deltaTasks, job.Cadence)
+	} else if oldJob.Cadence != job.Cadence {
+		e.metrics.updateCadence(newTasks, oldJob.Cadence, job.Cadence)
 	}
+
+	// Widest-job updates
 	currentMax := int(e.maxJobWidth.Load())
 	if newTasks > currentMax {
 		e.maxJobWidth.Store(int32(newTasks))
@@ -386,6 +394,10 @@ func (e *poolExecutor) Replace(job Job) error {
 
 // Schedule schedules a job for execution.
 func (e *poolExecutor) Schedule(job Job) error {
+	if err := job.Validate(); err != nil {
+		return fmt.Errorf("invalid job: %w", err)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -393,8 +405,14 @@ func (e *poolExecutor) Schedule(job Job) error {
 	if _, ok := e.jobQueue.JobInQueue(job.ID); ok == nil {
 		return errors.New("invalid job: duplicate job ID")
 	}
-	if err := job.Validate(); err != nil {
-		return fmt.Errorf("invalid job: %w", err)
+
+	// Check executor context state
+	select {
+	case <-e.ctx.Done():
+		// If the executor is stopped, do not continue adding the job
+		return errors.New("executor context is done")
+	default:
+		// Pass through if the executor is running
 	}
 
 	e.log.Debug().Msgf(
@@ -402,13 +420,9 @@ func (e *poolExecutor) Schedule(job Job) error {
 		len(job.Tasks), job.ID, job.Cadence,
 	)
 
-	// Check task manager state
-	select {
-	case <-e.ctx.Done():
-		// If the manager is stopped, do not continue adding the job
-		return errors.New("task manager is stopped")
-	default:
-		// Pass through if the manager is running
+	// Set NextExec to now if it is not set
+	if job.NextExec.IsZero() {
+		job.NextExec = time.Now().Add(job.Cadence)
 	}
 
 	// Update task metrics
@@ -416,7 +430,7 @@ func (e *poolExecutor) Schedule(job Job) error {
 	if taskCount > int(e.maxJobWidth.Load()) {
 		e.maxJobWidth.Store(int32(taskCount))
 	}
-	e.metrics.updateTaskMetrics(1, taskCount, job.Cadence)
+	e.metrics.updateMetrics(1, taskCount, job.Cadence)
 
 	// Scale worker pool if needed
 	e.scaleWorkerPool(taskCount)
@@ -424,11 +438,11 @@ func (e *poolExecutor) Schedule(job Job) error {
 	// Push the job to the queue
 	heap.Push(&e.jobQueue, &job)
 
-	// Signal the task manager to check for new tasks
+	// Signal the executor to check for new tasks
 	select {
 	case <-e.ctx.Done():
-		// Do nothing if the manager is stopped
-		return errors.New("task manager is stopped")
+		// Do nothing if the executor is stopped
+		return errors.New("executor context is done")
 	default:
 		select {
 		case e.newJobChan <- true:
@@ -443,9 +457,13 @@ func (e *poolExecutor) Schedule(job Job) error {
 
 // Start starts the executor by setting up the job queue, channels, and worker pool.
 func (e *poolExecutor) Start() {
-	// Metrics: reuse provided metrics and set done channel
+	// Metrics: reuse provided metrics but validate context
 	if e.metrics == nil {
-		e.metrics = &managerMetrics{}
+		e.metrics = newExecutorMetrics()
+	} else if e.metrics.ctx == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		e.metrics.ctx = ctx
+		e.metrics.cancel = cancel
 	}
 
 	// Job queue
@@ -479,9 +497,6 @@ func (e *poolExecutor) Start() {
 	e.workerPool.downScaleMinInterval = 100 * time.Millisecond
 	e.poolScaler.workerPool = e.workerPool
 
-	// Now that worker pool is created, tie metrics done channel to workerPoolDone
-	e.metrics.done = e.workerPoolDone
-
 	go e.metrics.consumeExecTime(e.workerPool.execTimeChan)
 	go e.run()
 	go e.periodicWorkerScaling()
@@ -509,7 +524,10 @@ func (e *poolExecutor) Stop() {
 		e.workerPool.stop()
 		<-e.workerPoolDone
 
-		// 5) Close taskChan after workers have exited to avoid sends after close
+		// 5) Stop metrics
+		e.metrics.cancel()
+
+		// 6) Close taskChan after workers have exited to avoid sends after close
 		close(e.taskChan)
 
 		e.log.Debug().Msg("Executor stopped")
@@ -521,7 +539,7 @@ func newPoolExecutor(
 	parentCtx context.Context,
 	logger zerolog.Logger,
 	errorChan chan error,
-	metrics *managerMetrics,
+	metrics *executorMetrics,
 	channelBufferSize int,
 	minWorkerCount int,
 	scaleInterval time.Duration,

@@ -43,7 +43,7 @@ func (j *Job) Validate() error {
 		return errors.New("job has no tasks")
 	}
 	// Jobs with a NextExec time more than one Cadence old would re-execute continually.
-	if j.NextExec.Before(time.Now().Add(-j.Cadence)) {
+	if !j.NextExec.IsZero() && j.NextExec.Before(time.Now().Add(-j.Cadence)) {
 		return errors.New("job NextExec is too early")
 	}
 

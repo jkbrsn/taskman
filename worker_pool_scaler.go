@@ -30,7 +30,7 @@ type poolScaler struct {
 	cfg PoolScaleConfig
 
 	workerPool *workerPool
-	metrics    *managerMetrics
+	metrics    *executorMetrics
 
 	lastScaleUp   time.Time
 	lastScaleDown time.Time
@@ -207,7 +207,7 @@ func defaultPoolScaleCfg() PoolScaleConfig {
 func newPoolScaler(
 	logger zerolog.Logger,
 	workerPool *workerPool,
-	metrics *managerMetrics,
+	metrics *executorMetrics,
 	cfg PoolScaleConfig,
 ) *poolScaler {
 	log := logger.With().Str("component", "pool_scaler").Logger()
