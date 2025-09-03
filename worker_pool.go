@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	// If the worker pool utilization is above this threshold, we will not scale down
-	utilizationThreshold = 0.4
-	// Minimum interval between downscaling events
-	downScaleMinInterval = time.Second * 30
+	// Defaults; can be overridden per pool via config.
+	defaultUtilizationThreshold = 0.4
+	defaultDownScaleMinInterval = time.Second * 30
 )
 
 // workerPool manages a pool of workers that execute tasks.
@@ -36,8 +35,10 @@ type workerPool struct {
 	stopPoolChan    chan struct{}      // Channel to signal stopping the worker pool
 	workerPoolDone  chan struct{}      // Channel to signal worker pool is done
 
-	workerScalingEvents atomic.Int64 // Number of worker scaling events since start
-	lastDownScale       time.Time    // Last time a downscaling event occurred
+	workerScalingEvents  atomic.Int64  // Number of worker scaling events since start
+	lastDownScale        time.Time     // Last time a downscaling event occurred
+	utilizationThreshold float64       // configurable per pool; default defaultUtilizationThreshold
+	downScaleMinInterval time.Duration // configurable per pool; default defaultDownScaleMinInterval
 
 	mu sync.Mutex
 	wg sync.WaitGroup
@@ -75,7 +76,7 @@ func (wp *workerPool) availableWorkers() int32 {
 func (wp *workerPool) addWorkers(nWorkers int) {
 	wp.log.Debug().Msgf("Adding %d new workers to the pool", nWorkers)
 	wp.wg.Add(nWorkers)
-	for range nWorkers {
+	for i := 0; i < nWorkers; i++ {
 		workerID := xid.New()
 		go wp.startWorker(workerID)
 	}
@@ -83,6 +84,12 @@ func (wp *workerPool) addWorkers(nWorkers int) {
 
 // adjustWorkerCount adjusts the number of workers in the pool to match the target worker count.
 func (wp *workerPool) adjustWorkerCount(newTargetCount int32) {
+	// Hard cap: never allow running workers to exceed defaultMaxWorkerCount
+	// TODO: move to using pool config instead of default
+	if newTargetCount > int32(defaultMaxWorkerCount) {
+		newTargetCount = int32(defaultMaxWorkerCount)
+	}
+
 	wp.workerScalingEvents.Add(1)
 	currentTarget := wp.targetWorkerCount()
 
@@ -97,8 +104,8 @@ func (wp *workerPool) adjustWorkerCount(newTargetCount int32) {
 
 	case newTargetCount < currentTarget:
 		// Scale down based on utilization and debounce
-		if wp.utilization() < utilizationThreshold &&
-			time.Since(wp.lastDownScale) >= downScaleMinInterval {
+		if wp.utilization() < wp.utilizationThreshold &&
+			time.Since(wp.lastDownScale) >= wp.downScaleMinInterval {
 			wp.log.Debug().Msgf(
 				"Scaling worker count DOWN from %d to %d",
 				currentTarget,
@@ -164,6 +171,8 @@ func (wp *workerPool) enqueueWorkerScaling(target int32) {
 	default:
 	}
 
+	// Optimistically store target immediately so metrics reflect intention without waiting.
+	//wp.workerCountTarget.Store(target)
 	// Attempt to send, but abort if stopPoolChan closes
 	select {
 	case wp.workerCountChan <- target:
@@ -389,13 +398,15 @@ func newWorkerPool(
 	log := logger.With().Str("component", "worker_pool").Logger()
 
 	pool := &workerPool{
-		log:             log,
-		errorChan:       errorChan,
-		execTimeChan:    execTimeChan,
-		stopPoolChan:    make(chan struct{}),
-		taskChan:        taskChan,
-		workerCountChan: make(chan int32, 1), // Buffered channel to prevent blocking
-		workerPoolDone:  workerPoolDone,
+		log:                  log,
+		errorChan:            errorChan,
+		execTimeChan:         execTimeChan,
+		stopPoolChan:         make(chan struct{}),
+		taskChan:             taskChan,
+		workerCountChan:      make(chan int32, 1), // Buffered channel to prevent blocking
+		workerPoolDone:       workerPoolDone,
+		utilizationThreshold: defaultUtilizationThreshold,
+		downScaleMinInterval: defaultDownScaleMinInterval,
 	}
 	pool.addWorkers(initialWorkerCount)
 	pool.workerCountTarget.Store(int32(initialWorkerCount))

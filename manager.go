@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	maxWorkerCount       = 4096
-	defaultScaleInterval = 30 * time.Second
-	defaultBufferSize    = 64
+	defaultMaxWorkerCount = 4096
+	defaultMinWorkerCount = 8
+	defaultScaleInterval  = 30 * time.Second
+	defaultBufferSize     = 64
 
 	defaultCatchUpMax = 1
 	defaultParallel   = true
@@ -223,7 +224,9 @@ func New(opts ...TMOption) *TaskManager {
 			tm.metrics,
 			tm.channelBufferSize,
 			tm.peMinWorkerCount,
-			tm.peScaleInterval)
+			tm.peScaleInterval,
+			defaultPoolScaleCfg(),
+		)
 	}
 
 	tm.log = tm.log.With().Str("pkg", "taskman").Logger()

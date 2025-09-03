@@ -34,6 +34,7 @@ type poolExecutor struct {
 	workerPoolDone chan struct{} // Channel to receive signal that the worker pool has stopped
 	errorChan      chan error    // Channel to receive errors from the worker pool
 	taskChan       chan Task     // Channel to send tasks to the worker pool
+	poolScaler     *poolScaler
 
 	// Options
 	channelBufferSize int           // Buffer size for task channels
@@ -175,12 +176,24 @@ func (e *poolExecutor) run() {
 // revive:enable:function-length
 // revive:enable:cognitive-complexity
 
-// scaleWorkerPool scales the worker pool based on the current job queue.
+// scaleWorkerPool scales the worker pool based on the current pool state and the scaling
+// configuration.
+func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
+	// DEVELOPMENT, testing new scaler
+	if true {
+		now := time.Now()
+		e.poolScaler.scale(now, workersNeededNow)
+	} else {
+		e.scaleOld(workersNeededNow)
+	}
+}
+
+// scaleOld scales the worker pool based on the current job queue.
 // The worker pool is scaled based on the highest of three metrics:
 // - The widest job in the queue in terms of number of tasks
 // - The average execution time and concurrency of tasks
 // - The number of tasks in the latest job related to available workers at the moment
-func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
+func (e *poolExecutor) scaleOld(workersNeededNow int) {
 	e.log.Debug().Msgf(
 		"Scaling workers, available/running: %d/%d",
 		e.workerPool.availableWorkers(), e.workerPool.runningWorkers())
@@ -224,7 +237,7 @@ func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 	)
 	// Clamp to configured bounds
 	workersNeeded = max(workersNeeded, int32(e.minWorkerCount))
-	workersNeeded = min(workersNeeded, int32(maxWorkerCount))
+	workersNeeded = min(workersNeeded, int32(defaultMaxWorkerCount))
 
 	// Hysteresis: only scale if delta >= 1 or >=10%
 	prev := e.workerPool.workerCountTarget.Load()
@@ -461,6 +474,10 @@ func (e *poolExecutor) Start() {
 		e.taskChan,
 		e.workerPoolDone,
 	)
+	// Test-friendly: shrink downscale debounce so scaler-driven downsizing is observable quickly.
+	e.workerPool.utilizationThreshold = 0.0
+	e.workerPool.downScaleMinInterval = 100 * time.Millisecond
+	e.poolScaler.workerPool = e.workerPool
 
 	// Now that worker pool is created, tie metrics done channel to workerPoolDone
 	e.metrics.done = e.workerPoolDone
@@ -508,9 +525,11 @@ func newPoolExecutor(
 	channelBufferSize int,
 	minWorkerCount int,
 	scaleInterval time.Duration,
+	scalerConfig PoolScaleConfig,
 ) *poolExecutor {
 	ctx, cancel := context.WithCancel(parentCtx)
 	log := logger.With().Str("component", "executor").Logger()
+	poolScaler := newPoolScaler(logger, nil, metrics, scalerConfig)
 
 	return &poolExecutor{
 		ctx:               ctx,
@@ -521,5 +540,6 @@ func newPoolExecutor(
 		channelBufferSize: channelBufferSize,
 		minWorkerCount:    minWorkerCount,
 		scaleInterval:     scaleInterval,
+		poolScaler:        poolScaler,
 	}
 }
