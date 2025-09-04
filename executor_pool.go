@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -176,89 +175,10 @@ func (e *poolExecutor) run() {
 // revive:enable:function-length
 // revive:enable:cognitive-complexity
 
-// scaleWorkerPool scales the worker pool based on the current pool state and the scaling
-// configuration.
+// scaleWorkerPool scales the worker pool based on the current pool state and configuration.
 func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
-	// DEVELOPMENT, testing new scaler
-	if true {
-		now := time.Now()
-		e.poolScaler.scale(now, workersNeededNow)
-	} else {
-		e.scaleOld(workersNeededNow)
-	}
-}
-
-// scaleOld scales the worker pool based on the current job queue.
-// The worker pool is scaled based on the highest of three metrics:
-// - The widest job in the queue in terms of number of tasks
-// - The average execution time and concurrency of tasks
-// - The number of tasks in the latest job related to available workers at the moment
-func (e *poolExecutor) scaleOld(workersNeededNow int) {
-	e.log.Debug().Msgf(
-		"Scaling workers, available/running: %d/%d",
-		e.workerPool.availableWorkers(), e.workerPool.runningWorkers())
-
-	const (
-		bufferFactor50  = 1.5 // modest buffer for predictable metrics
-		bufferFactor100 = 2.0 // larger buffer for less predictable parallel spikes
-	)
-
-	available := e.workerPool.availableWorkers()
-	running := e.workerPool.runningWorkers()
-
-	// Calculate the number of workers needed based on the widest job
-	workersNeededParallelTasks := e.maxJobWidth.Load()
-	// Apply the larger buffer factor for parallel tasks, as this is a low predictability metric
-	workersNeededParallelTasks = int32(
-		math.Ceil(float64(workersNeededParallelTasks) * bufferFactor100),
-	)
-
-	// Calculate the number of workers needed based on the average execution time and tasks/s
-	avgExecTimeSeconds := e.metrics.averageExecTime.Load().Seconds()
-	tasksPerSecond := float64(e.metrics.tasksPerSecond.Load())
-	workersNeededConcurrently := int32(math.Ceil(avgExecTimeSeconds * tasksPerSecond))
-	// Apply the smaller buffer factor for concurrent tasks, as this is a more predictable metric
-	workersNeededConcurrently = int32(
-		math.Ceil(float64(workersNeededConcurrently) * bufferFactor50),
-	)
-
-	// Calculate the number of workers needed right now (clamped and hysteresis-aware)
-	var workersNeededImmediately int32
-	if available < int32(workersNeededNow) {
-		extra := int32(workersNeededNow) - available
-		workersNeededImmediately = int32(math.Ceil(float64(running+extra) * bufferFactor50))
-	}
-
-	// Use the highest of the three metrics
-	workersNeeded := max(
-		workersNeededParallelTasks,
-		workersNeededConcurrently,
-		workersNeededImmediately,
-	)
-	// Clamp to configured bounds
-	workersNeeded = max(workersNeeded, int32(e.minWorkerCount))
-	workersNeeded = min(workersNeeded, int32(defaultMaxWorkerCount))
-
-	// Hysteresis: only scale if delta >= 1 or >=10%
-	prev := e.workerPool.workerCountTarget.Load()
-	delta := int(workersNeeded - prev)
-	if delta < 0 {
-		delta = -delta
-	}
-	threshold := int(math.Max(1, math.Ceil(0.1*float64(prev))))
-	if delta == 0 {
-		// No change
-		return
-	}
-
-	// Always enqueue at least the first change from default (prev==0 or 1)
-	if prev <= 1 || delta >= threshold {
-		e.workerPool.enqueueWorkerScaling(workersNeeded)
-		e.log.Debug().Msgf("Scaling workers -> target: %d (prev: %d)", workersNeeded, prev)
-		return
-	}
-	// For sub-threshold changes, enqueue without logging to avoid noise
-	e.workerPool.enqueueWorkerScaling(workersNeeded)
+	now := time.Now()
+	e.poolScaler.scale(now, workersNeededNow)
 }
 
 // Job returns the job with the given ID.
