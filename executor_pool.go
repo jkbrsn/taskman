@@ -392,7 +392,7 @@ func (e *poolExecutor) Start() {
 
 	// Channels (ownership):
 	// - executor owns: taskChan, newJobChan
-	// - workerPool owns: execTimeChan, workerPoolDone signaling
+	// - workerPool owns: execChan, workerPoolDone signaling
 	// - caller owns: errorChan
 	e.taskChan = make(chan Task, e.channelBufferSize)
 	if e.errorChan == nil {
@@ -404,11 +404,12 @@ func (e *poolExecutor) Start() {
 	e.newJobChan = make(chan bool, 2)
 
 	// Worker pool
+	execChan := make(chan time.Duration, e.channelBufferSize)
 	e.workerPool = newWorkerPool(
 		e.log, // Pass on logger instance
 		e.minWorkerCount,
 		e.errorChan,
-		make(chan time.Duration, e.channelBufferSize),
+		execChan,
 		e.taskChan,
 		e.workerPoolDone,
 	)
@@ -417,7 +418,7 @@ func (e *poolExecutor) Start() {
 	e.workerPool.downScaleMinInterval = 100 * time.Millisecond
 	e.poolScaler.workerPool = e.workerPool
 
-	go e.metrics.consumeExecTime(e.workerPool.execTimeChan)
+	go e.metrics.consumeExecChan(execChan)
 	go e.run()
 	go e.periodicWorkerScaling()
 }
@@ -428,7 +429,7 @@ func (e *poolExecutor) Stop() {
 	e.stopOnce.Do(func() {
 		// Stop sequence and channel ownership:
 		// - executor owns newJobChan and taskChan
-		// - workerPool owns execTimeChan and workerPoolDone
+		// - workerPool owns execChan and workerPoolDone
 		// - caller owns errorChan (never closed here)
 
 		// 1) Signal cancellation to all components

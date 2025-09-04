@@ -236,6 +236,7 @@ func New(opts ...TMOption) *TaskManager {
 			tm.log,
 			tm.errorChan,
 			tm.metrics,
+			tm.channelBufferSize,
 			tm.deCatchUpMax,
 			tm.deParallel,
 			tm.deMaxPar,

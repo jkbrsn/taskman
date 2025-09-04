@@ -35,14 +35,14 @@ type executorMetrics struct {
 	totalTaskExecutions atomic.Int64     // Total number of tasks executed
 }
 
-// consumeExecTime consumes execution times and calculates the average execution time of tasks.
-func (m *executorMetrics) consumeExecTime(execTimeChan <-chan time.Duration) {
+// consumeExecChan consumes execution times and calculates the average execution time of tasks.
+func (m *executorMetrics) consumeExecChan(execChan <-chan time.Duration) {
 	defer m.cancel()
 
 	for {
 		select {
-		case execTime := <-execTimeChan:
-			m.consumeOneExecTime(execTime)
+		case execTime := <-execChan:
+			m.consumeOneTaskExecution(execTime)
 		case <-m.ctx.Done():
 			// Only stop consuming once done is received
 			return
@@ -50,8 +50,8 @@ func (m *executorMetrics) consumeExecTime(execTimeChan <-chan time.Duration) {
 	}
 }
 
-// consumeOneExecTime updates the average execution time for a single observed execution.
-func (m *executorMetrics) consumeOneExecTime(execTime time.Duration) {
+// consumeOneTaskExecution updates the average execution time for a single observed task execution.
+func (m *executorMetrics) consumeOneTaskExecution(execTime time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

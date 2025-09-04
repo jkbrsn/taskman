@@ -414,6 +414,7 @@ func getDistExecutor() executor {
 		zerolog.Nop(),
 		make(chan error, defaultBufferSize),
 		&executorMetrics{},
+		defaultBufferSize,
 		1,
 		true,
 		0,
