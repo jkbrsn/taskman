@@ -7,7 +7,6 @@ require (
 	github.com/rs/xid v1.6.0
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.10.0
-	go.uber.org/atomic v1.11.0
 )
 
 require (

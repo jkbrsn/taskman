@@ -11,34 +11,6 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// safeExecuteTask executes one task with panic recovery and metrics update.
-func safeExecuteTask(
-	ctx context.Context,
-	jobID string,
-	t Task,
-	errCh chan<- error,
-	metrics *executorMetrics,
-) {
-	if ctx.Err() != nil {
-		return
-	}
-	defer func() {
-		if rec := recover(); rec != nil {
-			select {
-			case errCh <- fmt.Errorf("runner %s: panic: %v", jobID, rec):
-			default:
-			}
-		}
-	}()
-	if err := t.Execute(); err != nil {
-		select {
-		case errCh <- err:
-		default:
-		}
-	}
-	metrics.totalTaskExecutions.Add(1)
-}
-
 // distributedExecutor is an implementation of executor that runs tasks in separate goroutines.
 type distributedExecutor struct {
 	log zerolog.Logger
@@ -48,8 +20,9 @@ type distributedExecutor struct {
 
 	runners threadsafe.Map[string, *jobRunner] // jobID -> runner
 
-	errCh   chan error
-	metrics *executorMetrics
+	errCh    chan error
+	execChan chan time.Duration
+	metrics  *executorMetrics
 
 	// Configurable options
 	catchUpMax int  // max immediate catch-ups per tick when behind schedule
@@ -71,13 +44,14 @@ func (e *distributedExecutor) Job(jobID string) (Job, error) {
 
 // Metrics returns the metrics for the distributed executor.
 func (e *distributedExecutor) Metrics() TaskManagerMetrics {
+	snap := e.metrics.snapshot()
 	return TaskManagerMetrics{
-		ManagedJobs:          int(e.metrics.jobsManaged.Load()),
-		JobsPerSecond:        e.metrics.jobsPerSecond.Load(),
-		ManagedTasks:         int(e.metrics.tasksManaged.Load()),
-		TasksPerSecond:       e.metrics.tasksPerSecond.Load(),
-		TaskAverageExecTime:  time.Duration(e.metrics.averageExecTime.Load()),
-		TasksTotalExecutions: int(e.metrics.totalTaskExecutions.Load()),
+		ManagedJobs:          int(snap.JobsManaged),
+		JobsPerSecond:        snap.JobsPerSecond,
+		ManagedTasks:         int(snap.TasksManaged),
+		TasksPerSecond:       snap.TasksPerSecond,
+		TasksAverageExecTime: snap.TasksAverageExecTime,
+		TasksTotalExecutions: int(snap.TasksTotalExecutions),
 		PoolMetrics:          nil,
 	}
 }
@@ -156,7 +130,7 @@ func (e *distributedExecutor) Schedule(job Job) error {
 		catchUpMax: e.catchUpMax,
 	}
 	runner.wg.Add(1)
-	go runner.loop(e.errCh, e.metrics)
+	go runner.loop(e.errCh, e.execChan)
 
 	e.runners.Set(job.ID, runner)
 	e.metrics.updateMetrics(1, len(job.Tasks), job.Cadence)
@@ -175,6 +149,8 @@ func (e *distributedExecutor) Start() {
 		e.metrics.ctx = ctx
 		e.metrics.cancel = cancel
 	}
+
+	go e.metrics.consumeExecChan(e.execChan)
 }
 
 // Stop stops the distributed executor by sending a cancel signal to all runners.
@@ -186,6 +162,9 @@ func (e *distributedExecutor) Stop() {
 		value.wg.Wait()
 		return true
 	})
+
+	// Close execution channel
+	close(e.execChan)
 
 	// Stop metrics
 	e.metrics.cancel()
@@ -205,12 +184,12 @@ type jobRunner struct {
 	catchUpMax int  // max immediate catch-ups per tick when behind
 }
 
-func (r *jobRunner) execute(errCh chan<- error, metrics *executorMetrics) {
+func (r *jobRunner) execute(errCh chan<- error, execChan chan<- time.Duration) {
 	if r.parallel {
-		r.runParallel(errCh, metrics)
+		r.runParallel(errCh, execChan)
 		return
 	}
-	r.runSequential(errCh, metrics)
+	r.runSequential(errCh, execChan)
 }
 
 // loop runs the job runner.
@@ -220,7 +199,7 @@ func (r *jobRunner) execute(errCh chan<- error, metrics *executorMetrics) {
 // cadence. If the runner fell behind schedule (e.g., the previous run took longer than
 // one cadence), we allow it to "catch up" by at most catchUpMax skipped periods to avoid
 // a long backlog of immediate executions.
-func (r *jobRunner) loop(errCh chan<- error, metrics *executorMetrics) {
+func (r *jobRunner) loop(errCh chan<- error, execChan chan<- time.Duration) {
 	defer r.wg.Done()
 
 	// Initialize the first fire time from the job's schedule.
@@ -241,12 +220,11 @@ func (r *jobRunner) loop(errCh chan<- error, metrics *executorMetrics) {
 		case <-r.ctx.Done():
 			return
 		case <-timer.C:
-			start := time.Now()
-
 			// Execute tasks for this job tick.
-			r.execute(errCh, metrics)
+			r.execute(errCh, execChan)
 
-			metrics.consumeOneExecTime(time.Since(start))
+			// Meter one job execution time
+			//metrics.consumeOneTaskExecution(time.Since(start))
 
 			// Advance "next" forward by whole cadences until it lands in the future,
 			// but cap the number of immediate catch-ups to catchUpMax.
@@ -278,19 +256,19 @@ func (r *jobRunner) loop(errCh chan<- error, metrics *executorMetrics) {
 }
 
 // runSequential runs the job sequentially.
-func (r *jobRunner) runSequential(errCh chan<- error, metrics *executorMetrics) {
+func (r *jobRunner) runSequential(errCh chan<- error, execChan chan<- time.Duration) {
 	r.mu.RLock()
 	tasks := r.job.Tasks
 	jobID := r.job.ID
 	r.mu.RUnlock()
 
 	for _, t := range tasks {
-		safeExecuteTask(r.ctx, jobID, t, errCh, metrics)
+		safeExecuteTask(r.ctx, jobID, t, errCh, execChan)
 	}
 }
 
 // runParallel runs the job in parallel.
-func (r *jobRunner) runParallel(errCh chan<- error, metrics *executorMetrics) {
+func (r *jobRunner) runParallel(errCh chan<- error, execChan chan<- time.Duration) {
 	var wg sync.WaitGroup
 	var sem chan struct{}
 
@@ -313,7 +291,7 @@ func (r *jobRunner) runParallel(errCh chan<- error, metrics *executorMetrics) {
 		wg.Add(1)
 		go func(tt Task, jobID string) {
 			defer wg.Done()
-			safeExecuteTask(r.ctx, jobID, tt, errCh, metrics)
+			safeExecuteTask(r.ctx, jobID, tt, errCh, execChan)
 			if sem != nil {
 				<-sem
 			}
@@ -334,12 +312,43 @@ func equalRunners(r1, r2 *jobRunner) bool {
 	return r1.job.ID == r2.job.ID
 }
 
+// safeExecuteTask executes one task with panic recovery and metrics update.
+func safeExecuteTask(
+	ctx context.Context,
+	jobID string,
+	t Task,
+	errCh chan<- error,
+	execChan chan<- time.Duration,
+) {
+	if ctx.Err() != nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			select {
+			case errCh <- fmt.Errorf("runner %s: panic: %v", jobID, rec):
+			default:
+			}
+		}
+	}()
+
+	start := time.Now()
+	if err := t.Execute(); err != nil {
+		select {
+		case errCh <- err:
+		default:
+		}
+	}
+	execChan <- time.Since(start)
+}
+
 // newDistributedExecutor creates a new distributed executor.
 func newDistributedExecutor(
 	parent context.Context,
 	logger zerolog.Logger,
 	errCh chan error,
 	metrics *executorMetrics,
+	channelBufferSize int,
 	catchUpMax int,
 	parallel bool,
 	maxPar int,
@@ -353,6 +362,7 @@ func newDistributedExecutor(
 		cancel:     cancel,
 		runners:    threadsafe.NewRWMutexMap[string](equalRunners),
 		errCh:      errCh,
+		execChan:   make(chan time.Duration, channelBufferSize),
 		metrics:    metrics,
 		catchUpMax: catchUpMax,
 		parallel:   parallel,
