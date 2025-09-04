@@ -7,6 +7,11 @@ import (
 	"github.com/rs/zerolog"
 )
 
+const (
+	defaultWorkerUtilization = 0.70
+	defaultWorkerDeadband    = 0.10
+)
+
 // PoolScaleConfig tunes the worker pool control loop.
 type PoolScaleConfig struct {
 	MinWorkers        int
@@ -86,9 +91,12 @@ func (s *poolScaler) scale(
 
 	// 3) Compute demand-based worker target from utilization setpoint
 	// Little’s Law-ish sizing: Needed ≈ ceil( (λ * E[S]) / target_util ).
-	if s.cfg.TargetUtilization <= 0 || s.cfg.TargetUtilization > 0.9 {
-		// sane defaults
-		s.cfg.TargetUtilization = 0.70
+	const minTargetUtilization = 0.1
+	const maxTargetUtilization = 0.9
+	if s.cfg.TargetUtilization <= minTargetUtilization ||
+		s.cfg.TargetUtilization > maxTargetUtilization {
+		// Fall back on default
+		s.cfg.TargetUtilization = defaultWorkerUtilization
 	}
 	demandWorkers := int(math.Ceil((lambdaHat * eSHat) / s.cfg.TargetUtilization))
 	// If there is no managed work, prefer drifting toward minimum.
@@ -125,7 +133,9 @@ func (s *poolScaler) scale(
 	}
 	// Respect immediate pressure: if workersNeededNow is non-zero, bypass deadband for upscales.
 	// Also, when there is no managed work, bypass deadband for downscales toward min.
-	if !((workersNeededNow > 0 && desired > prevTarget) || (s.metrics.tasksManaged.Load() == 0 && desired < prevTarget)) {
+	respectPressureUpscale := workersNeededNow > 0 && desired > prevTarget
+	noManagedWorkDownscale := desired < prevTarget && s.metrics.tasksManaged.Load() == 0
+	if !respectPressureUpscale && !noManagedWorkDownscale {
 		if absInt(desired-prevTarget) <= deadband {
 			s.log.Debug().Msgf("Within deadband: suppress change")
 			return
@@ -186,12 +196,14 @@ func (s *poolScaler) scale(
 }
 
 // defaultPoolScaleCfg returns the default pool scale configuration.
+//
+// revive:disable:add-constant default definitions
 func defaultPoolScaleCfg() PoolScaleConfig {
 	return PoolScaleConfig{
 		MaxWorkers:          defaultMaxWorkerCount,
 		MinWorkers:          defaultMinWorkerCount,
-		TargetUtilization:   0.70,
-		DeadbandRatio:       0.10,
+		TargetUtilization:   defaultWorkerUtilization,
+		DeadbandRatio:       defaultWorkerDeadband,
 		CooldownUp:          2 * time.Second,
 		CooldownDown:        45 * time.Second,
 		MaxStepUp:           0, // 0 = no cap (jump)
@@ -200,8 +212,9 @@ func defaultPoolScaleCfg() PoolScaleConfig {
 		EWMASlowAlpha:       0.10,
 		BurstHeadroomFactor: 1.25,
 	}
-
 }
+
+// revive:enable:add-constant
 
 // newPoolScaler creates a new pool scaler.
 func newPoolScaler(

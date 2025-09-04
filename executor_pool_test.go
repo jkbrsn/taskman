@@ -259,7 +259,7 @@ func TestPoolExecutor_PoolScaler(t *testing.T) {
 		time.Sleep(30 * time.Millisecond)
 
 		got := exec.workerPool.workerCountTarget.Load()
-		if !(got < prevTarget && got >= int32(exec.minWorkerCount)) {
+		if got >= prevTarget || got < int32(exec.minWorkerCount) {
 			t.Fatalf("expected downscale towards min; prev=%d got=%d min=%d",
 				prevTarget, got, exec.minWorkerCount)
 		}
