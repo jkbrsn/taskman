@@ -3,10 +3,7 @@ package taskman
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
-
-	uatomic "go.uber.org/atomic"
 )
 
 // PoolMetrics holds worker pool metrics.
@@ -19,20 +16,24 @@ type PoolMetrics struct {
 	WorkersRunning      int     // Number of running workers
 }
 
+// metricsState stores the canonical metrics under lock.
+type metricsState struct {
+	JobsManaged   int64
+	JobsPerSecond float32
+
+	TasksManaged         int64
+	TasksPerSecond       float32
+	TasksAverageExecTime time.Duration
+	TasksTotalExecutions int64
+}
+
 // executorMetrics stores metrics about task execution.
 type executorMetrics struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	mu sync.RWMutex
-
-	jobsManaged   atomic.Int64    // Total number of jobs managed
-	jobsPerSecond uatomic.Float32 // Number of jobs executed per second
-
-	tasksManaged        atomic.Int64     // Total number of tasks managed
-	tasksPerSecond      uatomic.Float32  // Number of tasks executed per second
-	averageExecTime     uatomic.Duration // Average execution time of tasks
-	totalTaskExecutions atomic.Int64     // Total number of tasks executed
+	s  metricsState
 }
 
 // consumeExecChan consumes execution times and calculates the average execution time of tasks.
@@ -55,12 +56,30 @@ func (m *executorMetrics) consumeOneTaskExecution(execTime time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	avgExecTime := m.averageExecTime.Load()
-	taskExecutions := m.totalTaskExecutions.Load()
-	newAvgExecTime := (avgExecTime*time.Duration(taskExecutions) + execTime) /
-		time.Duration(taskExecutions+1)
-	m.averageExecTime.Store(newAvgExecTime)
-	m.totalTaskExecutions.Add(1)
+	total := m.s.TasksTotalExecutions
+	avg := m.s.TasksAverageExecTime
+	newAvg := (avg*time.Duration(total) + execTime) / time.Duration(total+1)
+	m.s.TasksAverageExecTime = newAvg
+	m.s.TasksTotalExecutions = total + 1
+}
+
+// snapshot returns a copy of the current metrics state under read lock.
+func (m *executorMetrics) snapshot() metricsState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.s
+}
+
+// taskSnapshot returns instantaneous signals for scaler reads.
+// - tasksPerSec: current tasks/sec (float64)
+// - taskAvgExecSec: average task execution time in seconds (float64)
+// - tasks: number of managed tasks (int64)
+func (m *executorMetrics) taskSnapshot() (tasksPerSec float64, taskAvgExecSec float64, tasks int64) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return float64(m.s.TasksPerSecond), m.s.TasksAverageExecTime.Seconds(), m.s.TasksManaged
 }
 
 // updateCadence updates the metrics for a change in cadence only. If called with
@@ -69,12 +88,9 @@ func (m *executorMetrics) updateCadence(newTaskCount int, old, new time.Duration
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	tasksPerSecondDelta := float32(newTaskCount) * (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
-	jobsPerSecondDelta := (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
-
-	// Store updated values
-	m.tasksPerSecond.Add(tasksPerSecondDelta)
-	m.jobsPerSecond.Add(jobsPerSecondDelta)
+	delta := (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
+	m.s.TasksPerSecond += float32(newTaskCount) * delta
+	m.s.JobsPerSecond += delta
 }
 
 // updateMetrics updates the metrics. The input deltas correspond to number of tasks or jobs added
@@ -83,30 +99,31 @@ func (m *executorMetrics) updateMetrics(jobDelta, taskDelta int, cadence time.Du
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Calculate the new number of tasks in the queue
-	currentTaskCount := m.tasksManaged.Load()
-	newTaskCount := currentTaskCount + int64(taskDelta)
-	currentJobCount := m.jobsManaged.Load()
-	newJobCount := currentJobCount + int64(jobDelta)
+	newTaskCount := m.s.TasksManaged + int64(taskDelta)
+	newJobCount := m.s.JobsManaged + int64(jobDelta)
 
-	// Avoid division by zero
+	// Avoid division by zero and clamp counts to non-negative
 	if newTaskCount <= 0 || newJobCount <= 0 {
-		m.tasksPerSecond.Store(0)
-		m.jobsPerSecond.Store(0)
-		m.tasksManaged.Store(max(newTaskCount, 0))
-		m.jobsManaged.Store(max(newJobCount, 0))
+		m.s.TasksPerSecond = 0
+		m.s.JobsPerSecond = 0
+		if newTaskCount < 0 {
+			newTaskCount = 0
+		}
+		if newJobCount < 0 {
+			newJobCount = 0
+		}
+		m.s.TasksManaged = newTaskCount
+		m.s.JobsManaged = newJobCount
 		return
 	}
 
-	// Calculate execution per second contributions
 	tasksPerSecond := float32(taskDelta) / float32(cadence.Seconds())
 	jobsPerSecond := float32(jobDelta) / float32(cadence.Seconds())
 
-	// Store updated values
-	m.tasksPerSecond.Add(tasksPerSecond)
-	m.tasksManaged.Add(int64(taskDelta))
-	m.jobsPerSecond.Add(jobsPerSecond)
-	m.jobsManaged.Add(int64(jobDelta))
+	m.s.TasksPerSecond += tasksPerSecond
+	m.s.TasksManaged = newTaskCount
+	m.s.JobsPerSecond += jobsPerSecond
+	m.s.JobsManaged = newJobCount
 }
 
 // newExecutorMetrics creates a new executor metrics instance.

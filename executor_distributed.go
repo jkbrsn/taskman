@@ -44,13 +44,14 @@ func (e *distributedExecutor) Job(jobID string) (Job, error) {
 
 // Metrics returns the metrics for the distributed executor.
 func (e *distributedExecutor) Metrics() TaskManagerMetrics {
+	snap := e.metrics.snapshot()
 	return TaskManagerMetrics{
-		ManagedJobs:          int(e.metrics.jobsManaged.Load()),
-		JobsPerSecond:        e.metrics.jobsPerSecond.Load(),
-		ManagedTasks:         int(e.metrics.tasksManaged.Load()),
-		TasksPerSecond:       e.metrics.tasksPerSecond.Load(),
-		TaskAverageExecTime:  time.Duration(e.metrics.averageExecTime.Load()),
-		TasksTotalExecutions: int(e.metrics.totalTaskExecutions.Load()),
+		ManagedJobs:          int(snap.JobsManaged),
+		JobsPerSecond:        snap.JobsPerSecond,
+		ManagedTasks:         int(snap.TasksManaged),
+		TasksPerSecond:       snap.TasksPerSecond,
+		TasksAverageExecTime: snap.TasksAverageExecTime,
+		TasksTotalExecutions: int(snap.TasksTotalExecutions),
 		PoolMetrics:          nil,
 	}
 }

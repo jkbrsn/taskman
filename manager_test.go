@@ -579,11 +579,11 @@ func TestManagerMetrics(t *testing.T) {
 		time.Sleep(10 * time.Millisecond) // Allow time for metrics to be updated
 
 		// Verify the metrics
-		assert.Equal(t, int64(1), manager.metrics.totalTaskExecutions.Load(),
+		assert.Equal(t, int64(1), manager.metrics.snapshot().TasksTotalExecutions,
 			"Expected 1 total task to have been counted")
 		assert.GreaterOrEqual(
 			t,
-			manager.metrics.averageExecTime.Load(),
+			manager.metrics.snapshot().TasksAverageExecTime,
 			executionTime,
 			"Expected task execution time to be at least 10ms",
 		)
@@ -595,7 +595,7 @@ func TestManagerMetrics(t *testing.T) {
 		// Verify task execution metrics
 		assert.Equal(t, 1, metrics.TasksTotalExecutions,
 			"Expected 1 total task to have been counted")
-		assert.GreaterOrEqual(t, metrics.TaskAverageExecTime, executionTime,
+		assert.GreaterOrEqual(t, metrics.TasksAverageExecTime, executionTime,
 			"Expected task execution time to be at least %v", executionTime)
 		assert.Greater(t, metrics.TasksPerSecond, float32(0),
 			"Expected tasks per second to be greater than 0")

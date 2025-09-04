@@ -40,27 +40,28 @@ type poolScaler struct {
 	lastScaleUp   time.Time
 	lastScaleDown time.Time
 
-	// Smoothed signals (dual horizon).
+	// Smoothed signals (dual horizon)
 	lambdaFast float64 // tasks/sec (fast EWMA)
 	lambdaSlow float64 // tasks/sec (slow EWMA)
 	esFast     float64 // mean exec seconds (fast EWMA)
 	esSlow     float64 // mean exec seconds (slow EWMA)
 }
 
-// scale implements a control-loop with EWMA smoothing, target utilization,
-// hysteresis/deadband, and asymmetric (fast-up, slow-down) behavior.
+// scale implements a control-loop with EWMA smoothing, target utilization, hysteresis/deadband,
+// and asymmetric (fast-up, slow-down) behavior with optional burst headroom.
 func (s *poolScaler) scale(
 	now time.Time,
-	workersNeededNow int, // immediate pressure signal from your scheduler
+	workersNeededNow int,
 ) {
 	available := int(s.workerPool.availableWorkers())
 	running := int(s.workerPool.runningWorkers())
 	prevTarget := int(s.workerPool.workerCountTarget.Load())
 	s.log.Debug().Msgf("Scaling workers, available/running: %d/%d", available, running)
 
-	// 1) Read instantaneous signals (cheap, already tracked in your metrics)
-	instLambda := float64(s.metrics.tasksPerSecond.Load()) // tasks/sec
-	instESec := s.metrics.averageExecTime.Load().Seconds() // sec per task
+	// 1) Read instantaneous signal
+	lambda, eSec, tasks := s.metrics.taskSnapshot() // tasks/sec, avg sec, tasks managed
+	instLambda := lambda                            // tasks/sec
+	instESec := eSec                                // sec per task
 	if instESec < 1e-6 {
 		// Avoid divide-by-zero; if we have no recent tasks, assume tiny service time.
 		instESec = 1e-6
@@ -68,7 +69,7 @@ func (s *poolScaler) scale(
 
 	// 2) Update dual-horizon EWMAs
 	// If no tasks are managed, aggressively decay lambdas to zero.
-	if s.metrics.tasksManaged.Load() == 0 {
+	if tasks == 0 {
 		instLambda = 0
 	}
 
@@ -100,15 +101,14 @@ func (s *poolScaler) scale(
 	}
 	demandWorkers := int(math.Ceil((lambdaHat * eSHat) / s.cfg.TargetUtilization))
 	// If there is no managed work, prefer drifting toward minimum.
-	if s.metrics.tasksManaged.Load() == 0 {
+	if tasks == 0 {
 		demandWorkers = s.cfg.MinWorkers
 	}
 	s.log.Debug().Msgf("Demand-based workers: %d", demandWorkers)
 
 	// 4) Compute immediate pressure worker target (burst/backlog)
-	// If scheduler says we need more *right now* than we have available, propose enough workers
-	// to cover it, with optional burst headroom.
-	// Default immediate target assumes no special pressure.
+	// If scheduler says we need more *right now* than we have available, propose enough workers to
+	// cover it, with optional burst headroom. Default immediate target assumes no special pressure.
 	immediate := 0
 	// Treat equality as pressure: if needed >= available, cover the gap with headroom.
 	if workersNeededNow >= available {
@@ -134,7 +134,7 @@ func (s *poolScaler) scale(
 	// Respect immediate pressure: if workersNeededNow is non-zero, bypass deadband for upscales.
 	// Also, when there is no managed work, bypass deadband for downscales toward min.
 	respectPressureUpscale := workersNeededNow > 0 && desired > prevTarget
-	noManagedWorkDownscale := desired < prevTarget && s.metrics.tasksManaged.Load() == 0
+	noManagedWorkDownscale := desired < prevTarget && tasks == 0
 	if !respectPressureUpscale && !noManagedWorkDownscale {
 		if absInt(desired-prevTarget) <= deadband {
 			s.log.Debug().Msgf("Within deadband: suppress change")

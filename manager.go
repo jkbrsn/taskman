@@ -46,7 +46,7 @@ type TaskManagerMetrics struct {
 	// Tasks
 	ManagedTasks         int           // Total number of tasks in the queue
 	TasksPerSecond       float32       // Number of tasks executed per second
-	TaskAverageExecTime  time.Duration // Average execution time of tasks
+	TasksAverageExecTime time.Duration // Average execution time of tasks
 	TasksTotalExecutions int           // Total number of tasks executed
 
 	// Worker pool
