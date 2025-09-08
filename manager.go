@@ -40,8 +40,9 @@ type TMOption func(*TaskManager)
 // TaskManagerMetrics holds metrics about various aspects of the task manager.
 type TaskManagerMetrics struct {
 	// Jobs
-	ManagedJobs   int     // Total number of jobs in the queue
-	JobsPerSecond float32 // Number of jobs executed per second
+	ManagedJobs         int     // Total number of jobs in the queue
+	JobsPerSecond       float32 // Number of jobs executed per second
+	JobsTotalExecutions int     // Total number of jobs executed
 
 	// Tasks
 	ManagedTasks         int           // Total number of tasks in the queue
@@ -53,7 +54,6 @@ type TaskManagerMetrics struct {
 	PoolMetrics *PoolMetrics
 
 	// TODO: consider adding:
-	// JobsPerSecond float32
 	// JobSuccessRate
 	// JobLatency
 	// JobBacklog
@@ -61,7 +61,6 @@ type TaskManagerMetrics struct {
 	// TaskLatency
 	// TaskQueueWait
 	// TaskBacklogLength
-	// WorkerAverageLifetime
 }
 
 // TaskManager manages task scheduling and execution. Tasks are scheduled within Jobs, and the

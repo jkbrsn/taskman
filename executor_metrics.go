@@ -18,9 +18,9 @@ type PoolMetrics struct {
 
 // metricsState stores the canonical metrics under lock.
 type metricsState struct {
-	JobsManaged   int64
-	JobsPerSecond float32
-
+	JobsManaged          int64
+	JobsPerSecond        float32
+	JobsTotalExecutions  int64
 	TasksManaged         int64
 	TasksPerSecond       float32
 	TasksAverageExecTime time.Duration
@@ -34,6 +34,29 @@ type executorMetrics struct {
 
 	mu sync.RWMutex
 	s  metricsState
+}
+
+// consumeJobExecChan consumes job execution signals.
+func (m *executorMetrics) consumeJobExecChan(jobExecChan <-chan struct{}) {
+	defer m.cancel()
+
+	for {
+		select {
+		case <-jobExecChan:
+			m.consumeOneJobExecution()
+		case <-m.ctx.Done():
+			// Only stop consuming once done is received
+			return
+		}
+	}
+}
+
+// consumeOneJobExecution updates the average execution time for a single observed task execution.
+func (m *executorMetrics) consumeOneJobExecution() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.s.JobsTotalExecutions++
 }
 
 // consumeExecChan consumes execution times and calculates the average execution time of tasks.

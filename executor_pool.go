@@ -41,6 +41,7 @@ type poolExecutor struct {
 	scaleInterval     time.Duration // Interval for automatic scaling of the worker pool
 
 	// Metrics
+	jobExecChan chan struct{}    // Channel to signal that a job has been executed
 	metrics     *executorMetrics // Metrics for the overall task manager
 	maxJobWidth atomic.Int32     // Widest job in the queue in terms of number of tasks
 }
@@ -134,6 +135,11 @@ func (e *poolExecutor) run() {
 				}
 			}
 
+			// Signal that a job has been executed
+			// Note: we actually don't know the execution status here but can assume that by
+			// dispatching the tasks, the job has been executed
+			e.jobExecChan <- struct{}{}
+
 			// Reschedule the job under lock
 			e.mu.Lock()
 			if index < len(e.jobQueue) && e.jobQueue[index].ID == jobID {
@@ -200,6 +206,7 @@ func (e *poolExecutor) Metrics() TaskManagerMetrics {
 	return TaskManagerMetrics{
 		ManagedJobs:          int(snap.JobsManaged),
 		JobsPerSecond:        snap.JobsPerSecond,
+		JobsTotalExecutions:  int(snap.JobsTotalExecutions),
 		ManagedTasks:         int(snap.TasksManaged),
 		TasksPerSecond:       snap.TasksPerSecond,
 		TasksAverageExecTime: snap.TasksAverageExecTime,
@@ -403,6 +410,7 @@ func (e *poolExecutor) Start() {
 	e.workerPoolDone = make(chan struct{})
 	e.runDone = make(chan struct{})
 	e.newJobChan = make(chan bool, 2)
+	e.jobExecChan = make(chan struct{}, e.channelBufferSize)
 
 	// Worker pool
 	execChan := make(chan time.Duration, e.channelBufferSize)
@@ -420,6 +428,7 @@ func (e *poolExecutor) Start() {
 	e.poolScaler.workerPool = e.workerPool
 
 	go e.metrics.consumeExecChan(execChan)
+	go e.metrics.consumeJobExecChan(e.jobExecChan)
 	go e.run()
 	go e.periodicWorkerScaling()
 }
@@ -451,6 +460,9 @@ func (e *poolExecutor) Stop() {
 
 		// 6) Close taskChan after workers have exited to avoid sends after close
 		close(e.taskChan)
+
+		// 7) Close jobExecChan
+		close(e.jobExecChan)
 
 		e.log.Debug().Msg("Executor stopped")
 	})

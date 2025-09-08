@@ -20,9 +20,10 @@ type distributedExecutor struct {
 
 	runners threadsafe.Map[string, *jobRunner] // jobID -> runner
 
-	errCh    chan error
-	execChan chan time.Duration
-	metrics  *executorMetrics
+	errCh       chan error
+	execChan    chan time.Duration
+	jobExecChan chan struct{}
+	metrics     *executorMetrics
 
 	// Configurable options
 	catchUpMax int  // max immediate catch-ups per tick when behind schedule
@@ -48,6 +49,7 @@ func (e *distributedExecutor) Metrics() TaskManagerMetrics {
 	return TaskManagerMetrics{
 		ManagedJobs:          int(snap.JobsManaged),
 		JobsPerSecond:        snap.JobsPerSecond,
+		JobsTotalExecutions:  int(snap.JobsTotalExecutions),
 		ManagedTasks:         int(snap.TasksManaged),
 		TasksPerSecond:       snap.TasksPerSecond,
 		TasksAverageExecTime: snap.TasksAverageExecTime,
@@ -130,7 +132,7 @@ func (e *distributedExecutor) Schedule(job Job) error {
 		catchUpMax: e.catchUpMax,
 	}
 	runner.wg.Add(1)
-	go runner.loop(e.errCh, e.execChan)
+	go runner.loop(e.errCh, e.execChan, e.jobExecChan)
 
 	e.runners.Set(job.ID, runner)
 	e.metrics.updateMetrics(1, len(job.Tasks), job.Cadence)
@@ -151,6 +153,7 @@ func (e *distributedExecutor) Start() {
 	}
 
 	go e.metrics.consumeExecChan(e.execChan)
+	go e.metrics.consumeJobExecChan(e.jobExecChan)
 }
 
 // Stop stops the distributed executor by sending a cancel signal to all runners.
@@ -165,6 +168,7 @@ func (e *distributedExecutor) Stop() {
 
 	// Close execution channel
 	close(e.execChan)
+	close(e.jobExecChan)
 
 	// Stop metrics
 	e.metrics.cancel()
@@ -199,7 +203,11 @@ func (r *jobRunner) execute(errCh chan<- error, execChan chan<- time.Duration) {
 // cadence. If the runner fell behind schedule (e.g., the previous run took longer than
 // one cadence), we allow it to "catch up" by at most catchUpMax skipped periods to avoid
 // a long backlog of immediate executions.
-func (r *jobRunner) loop(errCh chan<- error, execChan chan<- time.Duration) {
+func (r *jobRunner) loop(
+	errCh chan<- error,
+	execChan chan<- time.Duration,
+	jobExecChan chan<- struct{},
+) {
 	defer r.wg.Done()
 
 	// Initialize the first fire time from the job's schedule.
@@ -223,8 +231,8 @@ func (r *jobRunner) loop(errCh chan<- error, execChan chan<- time.Duration) {
 			// Execute tasks for this job tick.
 			r.execute(errCh, execChan)
 
-			// Meter one job execution time
-			//metrics.consumeOneTaskExecution(time.Since(start))
+			// Meter one job execution
+			jobExecChan <- struct{}{}
 
 			// Advance "next" forward by whole cadences until it lands in the future,
 			// but cap the number of immediate catch-ups to catchUpMax.
@@ -357,15 +365,16 @@ func newDistributedExecutor(
 	log := logger.With().Str("component", "executor").Logger()
 
 	return &distributedExecutor{
-		log:        log,
-		ctx:        ctx,
-		cancel:     cancel,
-		runners:    threadsafe.NewRWMutexMap[string](equalRunners),
-		errCh:      errCh,
-		execChan:   make(chan time.Duration, channelBufferSize),
-		metrics:    metrics,
-		catchUpMax: catchUpMax,
-		parallel:   parallel,
-		maxPar:     maxPar,
+		log:         log,
+		ctx:         ctx,
+		cancel:      cancel,
+		runners:     threadsafe.NewRWMutexMap[string](equalRunners),
+		errCh:       errCh,
+		execChan:    make(chan time.Duration, channelBufferSize),
+		jobExecChan: make(chan struct{}, channelBufferSize),
+		metrics:     metrics,
+		catchUpMax:  catchUpMax,
+		parallel:    parallel,
+		maxPar:      maxPar,
 	}
 }
