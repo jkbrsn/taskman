@@ -59,13 +59,13 @@ func (m *executorMetrics) consumeOneJobExecution() {
 	m.s.JobsTotalExecutions++
 }
 
-// consumeExecChan consumes execution times and calculates the average execution time of tasks.
-func (m *executorMetrics) consumeExecChan(execChan <-chan time.Duration) {
+// consumeTaskExecChan consumes execution times and calculates the average execution time of tasks.
+func (m *executorMetrics) consumeTaskExecChan(taskExecChan <-chan time.Duration) {
 	defer m.cancel()
 
 	for {
 		select {
-		case execTime := <-execChan:
+		case execTime := <-taskExecChan:
 			m.consumeOneTaskExecution(execTime)
 		case <-m.ctx.Done():
 			// Only stop consuming once done is received
