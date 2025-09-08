@@ -18,9 +18,9 @@ type PoolMetrics struct {
 
 // metricsState stores the canonical metrics under lock.
 type metricsState struct {
-	JobsManaged   int64
-	JobsPerSecond float32
-
+	JobsManaged          int64
+	JobsPerSecond        float32
+	JobsTotalExecutions  int64
 	TasksManaged         int64
 	TasksPerSecond       float32
 	TasksAverageExecTime time.Duration
@@ -36,13 +36,36 @@ type executorMetrics struct {
 	s  metricsState
 }
 
-// consumeExecChan consumes execution times and calculates the average execution time of tasks.
-func (m *executorMetrics) consumeExecChan(execChan <-chan time.Duration) {
+// consumeJobExecChan consumes job execution signals.
+func (m *executorMetrics) consumeJobExecChan(jobExecChan <-chan struct{}) {
 	defer m.cancel()
 
 	for {
 		select {
-		case execTime := <-execChan:
+		case <-jobExecChan:
+			m.consumeOneJobExecution()
+		case <-m.ctx.Done():
+			// Only stop consuming once done is received
+			return
+		}
+	}
+}
+
+// consumeOneJobExecution updates the average execution time for a single observed task execution.
+func (m *executorMetrics) consumeOneJobExecution() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.s.JobsTotalExecutions++
+}
+
+// consumeTaskExecChan consumes execution times and calculates the average execution time of tasks.
+func (m *executorMetrics) consumeTaskExecChan(taskExecChan <-chan time.Duration) {
+	defer m.cancel()
+
+	for {
+		select {
+		case execTime := <-taskExecChan:
 			m.consumeOneTaskExecution(execTime)
 		case <-m.ctx.Done():
 			// Only stop consuming once done is received

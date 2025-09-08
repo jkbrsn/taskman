@@ -41,6 +41,7 @@ type poolExecutor struct {
 	scaleInterval     time.Duration // Interval for automatic scaling of the worker pool
 
 	// Metrics
+	jobExecChan chan struct{}    // Channel to signal that a job has been executed
 	metrics     *executorMetrics // Metrics for the overall task manager
 	maxJobWidth atomic.Int32     // Widest job in the queue in terms of number of tasks
 }
@@ -134,6 +135,11 @@ func (e *poolExecutor) run() {
 				}
 			}
 
+			// Signal that a job has been executed
+			// Note: we actually don't know the execution status here but can assume that by
+			// dispatching the tasks, the job has been executed
+			e.jobExecChan <- struct{}{}
+
 			// Reschedule the job under lock
 			e.mu.Lock()
 			if index < len(e.jobQueue) && e.jobQueue[index].ID == jobID {
@@ -200,6 +206,7 @@ func (e *poolExecutor) Metrics() TaskManagerMetrics {
 	return TaskManagerMetrics{
 		ManagedJobs:          int(snap.JobsManaged),
 		JobsPerSecond:        snap.JobsPerSecond,
+		JobsTotalExecutions:  int(snap.JobsTotalExecutions),
 		ManagedTasks:         int(snap.TasksManaged),
 		TasksPerSecond:       snap.TasksPerSecond,
 		TasksAverageExecTime: snap.TasksAverageExecTime,
@@ -393,7 +400,7 @@ func (e *poolExecutor) Start() {
 
 	// Channels (ownership):
 	// - executor owns: taskChan, newJobChan
-	// - workerPool owns: execChan, workerPoolDone signaling
+	// - workerPool owns: taskExecChan, workerPoolDone signaling
 	// - caller owns: errorChan
 	e.taskChan = make(chan Task, e.channelBufferSize)
 	if e.errorChan == nil {
@@ -403,14 +410,15 @@ func (e *poolExecutor) Start() {
 	e.workerPoolDone = make(chan struct{})
 	e.runDone = make(chan struct{})
 	e.newJobChan = make(chan bool, 2)
+	e.jobExecChan = make(chan struct{}, e.channelBufferSize)
 
 	// Worker pool
-	execChan := make(chan time.Duration, e.channelBufferSize)
+	taskExecChan := make(chan time.Duration, e.channelBufferSize)
 	e.workerPool = newWorkerPool(
 		e.log, // Pass on logger instance
 		e.minWorkerCount,
 		e.errorChan,
-		execChan,
+		taskExecChan,
 		e.taskChan,
 		e.workerPoolDone,
 	)
@@ -419,7 +427,8 @@ func (e *poolExecutor) Start() {
 	e.workerPool.downScaleMinInterval = 100 * time.Millisecond
 	e.poolScaler.workerPool = e.workerPool
 
-	go e.metrics.consumeExecChan(execChan)
+	go e.metrics.consumeTaskExecChan(taskExecChan)
+	go e.metrics.consumeJobExecChan(e.jobExecChan)
 	go e.run()
 	go e.periodicWorkerScaling()
 }
@@ -430,7 +439,7 @@ func (e *poolExecutor) Stop() {
 	e.stopOnce.Do(func() {
 		// Stop sequence and channel ownership:
 		// - executor owns newJobChan and taskChan
-		// - workerPool owns execChan and workerPoolDone
+		// - workerPool owns taskExecChan and workerPoolDone
 		// - caller owns errorChan (never closed here)
 
 		// 1) Signal cancellation to all components
@@ -451,6 +460,9 @@ func (e *poolExecutor) Stop() {
 
 		// 6) Close taskChan after workers have exited to avoid sends after close
 		close(e.taskChan)
+
+		// 7) Close jobExecChan
+		close(e.jobExecChan)
 
 		e.log.Debug().Msg("Executor stopped")
 	})

@@ -29,7 +29,7 @@ type workerPool struct {
 	workerCountTarget atomic.Int32 // Target number of workers
 
 	errorChan       chan<- error       // Send-only channel for errors
-	execChan        chan time.Duration // Channel to send execution times
+	taskExecChan    chan time.Duration // Channel to send execution times
 	taskChan        <-chan Task        // Receive-only channel for tasks
 	workerCountChan chan int32         // Channel to receive worker count changes
 	stopPoolChan    chan struct{}      // Channel to signal stopping the worker pool
@@ -239,7 +239,7 @@ func (wp *workerPool) executeTask(w *workerInfo, id xid.ID, task Task) {
 	}
 	execTime := time.Since(start)
 	select {
-	case wp.execChan <- execTime:
+	case wp.taskExecChan <- execTime:
 		// Execution time sent
 	default:
 		// Execution time channel not ready to receive, do nothing
@@ -294,7 +294,7 @@ func (wp *workerPool) stop() {
 	wp.wg.Wait()
 
 	// Close the execution channel
-	close(wp.execChan)
+	close(wp.taskExecChan)
 
 	// Signal worker pool is done
 	close(wp.workerPoolDone)
@@ -394,7 +394,7 @@ func newWorkerPool(
 	logger zerolog.Logger,
 	initialWorkerCount int,
 	errorChan chan error,
-	execChan chan time.Duration,
+	taskExecChan chan time.Duration,
 	taskChan chan Task,
 	workerPoolDone chan struct{},
 ) *workerPool {
@@ -403,7 +403,7 @@ func newWorkerPool(
 	pool := &workerPool{
 		log:                  log,
 		errorChan:            errorChan,
-		execChan:             execChan,
+		taskExecChan:         taskExecChan,
 		stopPoolChan:         make(chan struct{}),
 		taskChan:             taskChan,
 		workerCountChan:      make(chan int32, 1), // Buffered channel to prevent blocking

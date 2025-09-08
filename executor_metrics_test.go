@@ -85,3 +85,24 @@ func TestUpdateMetrics(t *testing.T) {
 		0.001, "Expected tasksPerSecond to be %f, got %f",
 		expectedTasksPerSecond, metrics.snapshot().TasksPerSecond)
 }
+
+func TestConsumeOneJobExecution(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	metrics := &executorMetrics{
+		ctx: ctx,
+	}
+	defer cancel()
+
+	// Initial state
+	initialJobsTotalExecutions := metrics.snapshot().JobsTotalExecutions
+
+	// Consume one job execution
+	metrics.consumeOneJobExecution()
+
+	// Verify the jobsTotalExecutions is updated correctly
+	expectedJobsTotalExecutions := initialJobsTotalExecutions + 1
+	assert.Equal(
+		t, expectedJobsTotalExecutions, metrics.snapshot().JobsTotalExecutions,
+		"Expected jobsTotalExecutions to be %d, got %d", expectedJobsTotalExecutions,
+		metrics.snapshot().JobsTotalExecutions)
+}
