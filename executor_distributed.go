@@ -108,6 +108,15 @@ func (e *distributedExecutor) Schedule(job Job) error {
 		return fmt.Errorf("invalid job: %w", err)
 	}
 
+	// Check executor context state
+	select {
+	case <-e.ctx.Done():
+		// If the executor is stopped, do not continue adding the job
+		return errors.New("executor context is done")
+	default:
+		// Pass through if the executor is running
+	}
+
 	if _, exists := e.runners.Get(job.ID); exists {
 		return errors.New("duplicate job ID")
 	}
