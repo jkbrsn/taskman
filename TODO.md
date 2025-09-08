@@ -15,9 +15,6 @@
   - An option to pause/stop a job
     - point would be to not have to remove a job and reinsert it when it should be resumed
     - could internally involve removing it from the queue, to an separate slice/structure, and then reinserting it when it should be resumed
-- Metrics
-  - Consider adding metrics for channel buffer sizes and queue sizes
-  - Consider ingesting executorMetrics updates via channel to avoid locks
 
 # feature ideas
 
