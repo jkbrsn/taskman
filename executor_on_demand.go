@@ -273,15 +273,14 @@ func (e *onDemandExecutor) run() {
 			tasks    []Task
 			nextExec time.Time
 			cadence  time.Duration
-			index    int
+			jobPtr   *Job
 		)
 		if queueLen > 0 {
-			next := e.jobQueue[0]
-			jobID = next.ID
-			tasks = next.Tasks
-			nextExec = next.NextExec
-			cadence = next.Cadence
-			index = next.index
+			jobPtr = e.jobQueue[0]
+			jobID = jobPtr.ID
+			tasks = jobPtr.Tasks
+			nextExec = jobPtr.NextExec
+			cadence = jobPtr.Cadence
 		}
 		e.mu.Unlock()
 
@@ -305,14 +304,14 @@ func (e *onDemandExecutor) run() {
 			go func() {
 				defer e.executingJobs.Done()
 				e.executeJob(jobID, tasks, e.errCh, e.taskExecChan)
-			}()
 
-			// Signal that a job has been executed
-			e.jobExecChan <- struct{}{}
+				// Signal that a job has been executed
+				e.jobExecChan <- struct{}{}
+			}()
 
 			// Reschedule the job under lock, with catch-up
 			e.mu.Lock()
-			if index < len(e.jobQueue) && e.jobQueue[index].ID == jobID {
+			if jobPtr != nil && jobPtr.index < len(e.jobQueue) && e.jobQueue[jobPtr.index].ID == jobID {
 				// Advance "next" forward by whole cadences until it lands in the future,
 				// but cap the number of immediate catch-ups to catchUpMax.
 				skips := 0
@@ -320,15 +319,15 @@ func (e *onDemandExecutor) run() {
 				if catchUpMax <= 0 {
 					catchUpMax = 1
 				}
-				for {
+				for skips < catchUpMax {
 					nextExec = nextExec.Add(cadence)
-					if skips >= catchUpMax || nextExec.After(time.Now()) {
+					if nextExec.After(now) {
 						break
 					}
 					skips++
 				}
-				e.jobQueue[index].NextExec = nextExec
-				heap.Fix(&e.jobQueue, index)
+				e.jobQueue[jobPtr.index].NextExec = nextExec
+				heap.Fix(&e.jobQueue, jobPtr.index)
 			}
 			e.mu.Unlock()
 			continue
