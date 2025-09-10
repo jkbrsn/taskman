@@ -38,10 +38,9 @@ type onDemandExecutor struct {
 	executingJobs sync.WaitGroup // Tracks currently executing jobs
 
 	// Configurable options
-	channelBufferSize int
-	catchUpMax        int  // max immediate catch-ups per tick when behind schedule
-	parallel          bool // run tasks in parallel within each job
-	maxPar            int  // parallelism limit per job (0 = unlimited)
+	catchUpMax int  // max immediate catch-ups per tick when behind schedule
+	parallel   bool // run tasks in parallel within each job
+	maxPar     int  // parallelism limit per job (0 = unlimited)
 }
 
 // Job returns the job with the given ID.
@@ -241,6 +240,8 @@ func (e *onDemandExecutor) Stop() {
 }
 
 // run runs the main loop of the on-demand executor.
+// revive:disable:function-length valid exception
+// revive:disable:cognitive-complexity valid exception
 func (e *onDemandExecutor) run() {
 	defer close(e.runDone)
 
@@ -361,8 +362,16 @@ func (e *onDemandExecutor) run() {
 	}
 }
 
+// revive:enable:function-length
+// revive:enable:cognitive-complexity
+
 // executeJob executes the tasks in a job using a one-hit goroutine.
-func (e *onDemandExecutor) executeJob(jobID string, tasks []Task, errCh chan<- error, taskExecChan chan<- time.Duration) {
+func (e *onDemandExecutor) executeJob(
+	jobID string,
+	tasks []Task,
+	errCh chan<- error,
+	taskExecChan chan<- time.Duration,
+) {
 	if e.parallel {
 		e.runParallel(jobID, tasks, errCh, taskExecChan)
 		return
@@ -371,14 +380,24 @@ func (e *onDemandExecutor) executeJob(jobID string, tasks []Task, errCh chan<- e
 }
 
 // runSequential runs the job sequentially.
-func (e *onDemandExecutor) runSequential(jobID string, tasks []Task, errCh chan<- error, taskExecChan chan<- time.Duration) {
+func (e *onDemandExecutor) runSequential(
+	jobID string,
+	tasks []Task,
+	errCh chan<- error,
+	taskExecChan chan<- time.Duration,
+) {
 	for _, t := range tasks {
 		safeExecuteTask(e.ctx, jobID, t, errCh, taskExecChan)
 	}
 }
 
 // runParallel runs the job in parallel.
-func (e *onDemandExecutor) runParallel(jobID string, tasks []Task, errCh chan<- error, taskExecChan chan<- time.Duration) {
+func (e *onDemandExecutor) runParallel(
+	jobID string,
+	tasks []Task,
+	errCh chan<- error,
+	taskExecChan chan<- time.Duration,
+) {
 	var wg sync.WaitGroup
 	var sem chan struct{}
 

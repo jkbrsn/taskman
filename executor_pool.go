@@ -66,8 +66,8 @@ func (e *poolExecutor) periodicWorkerScaling() {
 }
 
 // run runs the main loop of the pool executor.
-// revive:disable:function-length valid
-// revive:disable:cognitive-complexity valid
+// revive:disable:function-length valid exception
+// revive:disable:cognitive-complexity valid exception
 func (e *poolExecutor) run() {
 	defer close(e.runDone)
 
