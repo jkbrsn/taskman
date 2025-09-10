@@ -51,6 +51,129 @@ type poolScaler struct {
 	esSlow     float64 // mean exec seconds (slow EWMA)
 }
 
+// applyCooldowns applies asymmetric cooldowns and step caps, returning the next target.
+func (s *poolScaler) applyCooldowns(desired, prevTarget int, now time.Time) int {
+	nowIsAfter := func(t time.Time, d time.Duration) bool {
+		return t.IsZero() || now.Sub(t) >= d
+	}
+
+	var next int
+	if desired > prevTarget {
+		// Scale UP: fast path (short/no cooldown), optionally cap the jump.
+		if s.cfg.CooldownUp > 0 && !nowIsAfter(s.lastScaleUp, s.cfg.CooldownUp) {
+			// Too soon to scale up again.
+			return prevTarget
+		}
+		if s.cfg.MaxStepUp > 0 {
+			next = prevTarget + min(s.cfg.MaxStepUp, desired-prevTarget)
+		} else {
+			next = desired // jump
+		}
+		s.lastScaleUp = now
+	} else { // desired < prev
+		// Scale DOWN: cautious path (long cooldown), small steps.
+		if s.cfg.CooldownDown > 0 && !nowIsAfter(s.lastScaleDown, s.cfg.CooldownDown) {
+			return prevTarget
+		}
+		step := s.cfg.MaxStepDown
+		if step <= 0 {
+			step = 1
+		}
+		next = prevTarget - min(step, prevTarget-desired)
+		s.lastScaleDown = now
+	}
+	return next
+}
+
+// applyDeadband applies hysteresis and returns true if change should be suppressed.
+func (s *poolScaler) applyDeadband(desired, prevTarget, workersNeededNow int, tasks int64) bool {
+	// Convert % deadband to absolute units w.r.t prev.
+	deadband := int(math.Ceil(float64(prevTarget) * math.Max(s.cfg.DeadbandRatio, 0)))
+	// Allow tests/config to set zero deadband; only enforce min=1 if ratio > 0.
+	if s.cfg.DeadbandRatio > 0 && deadband < 1 {
+		deadband = 1
+	}
+	// Respect immediate pressure: if workersNeededNow is non-zero, bypass deadband for upscales.
+	// Also, when there is no managed work, bypass deadband for downscales toward min.
+	respectPressureUpscale := workersNeededNow > 0 && desired > prevTarget
+	noManagedWorkDownscale := desired < prevTarget && tasks == 0
+	if !respectPressureUpscale && !noManagedWorkDownscale {
+		if absInt(desired-prevTarget) <= deadband {
+			return true
+		}
+	}
+	return false
+}
+
+// blendEWMAs blends fast and slow EWMAs based on load trend.
+func (s *poolScaler) blendEWMAs() (lambdaHat, eSHat float64) {
+	// Weight the fast more when load is rising (simple heuristic).
+	rising := s.lambdaFast > s.lambdaSlow*risingThreshold
+	if rising {
+		lambdaHat = fastBlendWeight*s.lambdaFast + (1-fastBlendWeight)*s.lambdaSlow
+		eSHat = fastBlendWeight*s.esFast + (1-fastBlendWeight)*s.esSlow
+	} else {
+		lambdaHat = slowBlendWeight*s.lambdaFast + (1-slowBlendWeight)*s.lambdaSlow
+		eSHat = slowBlendWeight*s.esFast + (1-slowBlendWeight)*s.esSlow
+	}
+	return lambdaHat, eSHat
+}
+
+// computeDemandWorkers computes the demand-based worker target using Little's Law.
+func (s *poolScaler) computeDemandWorkers(lambdaHat, eSHat float64, tasks int64) int {
+	// Little’s Law-ish sizing: Needed ≈ ceil( (λ * E[S]) / target_util ).
+	const minTargetUtilization = 0.1
+	const maxTargetUtilization = 0.9
+	if s.cfg.TargetUtilization <= minTargetUtilization ||
+		s.cfg.TargetUtilization > maxTargetUtilization {
+		// Fall back on default
+		s.cfg.TargetUtilization = defaultTargetUtilization
+	}
+	demandWorkers := int(math.Ceil((lambdaHat * eSHat) / s.cfg.TargetUtilization))
+	// If there is no managed work, prefer drifting toward minimum.
+	if tasks == 0 {
+		demandWorkers = s.cfg.MinWorkers
+	}
+	return demandWorkers
+}
+
+// computeImmediatePressure computes workers needed for immediate burst/backlog.
+func (s *poolScaler) computeImmediatePressure(workersNeededNow, available, running int) int {
+	// If scheduler says we need more *right now* than we have available, propose enough workers to
+	// cover it, with optional burst headroom. Default immediate target assumes no special pressure.
+	immediate := 0
+	// Treat equality as pressure: if needed >= available, cover the gap with headroom.
+	if workersNeededNow >= available {
+		// Ensure target covers currently running plus the shortfall (needed - available).
+		shortfall := max(workersNeededNow-available, 0)
+		base := running + shortfall
+		immediate = int(math.Ceil(float64(base) * math.Max(s.cfg.BurstHeadroomFactor, 1.0)))
+	}
+	return immediate
+}
+
+// finalizeScaling clamps the target and enqueues the scaling if changed.
+func (s *poolScaler) finalizeScaling(next, prevTarget, desired int) {
+	clamped := clampInt(next, s.cfg.MinWorkers, s.cfg.MaxWorkers)
+	if clamped == prevTarget {
+		return // no change needed
+	}
+
+	s.workerPool.enqueueWorkerScaling(int32(clamped))
+
+	s.log.Debug().
+		Int("prev", prevTarget).
+		Int("next", clamped).
+		Int("desired", desired).
+		Float64("lambda_fast", s.lambdaFast).
+		Float64("lambda_slow", s.lambdaSlow).
+		Float64("E[S]_fast", s.esFast).
+		Float64("E[S]_slow", s.esSlow).
+		Float64("target_util", s.cfg.TargetUtilization).
+		Float64("deadband_ratio", s.cfg.DeadbandRatio).
+		Msg("autoscale result")
+}
+
 // scale implements a control-loop with EWMA smoothing, target utilization, hysteresis/deadband,
 // and asymmetric (fast-up, slow-down) behavior with optional burst headroom.
 func (s *poolScaler) scale(
@@ -72,55 +195,17 @@ func (s *poolScaler) scale(
 	}
 
 	// 2) Update dual-horizon EWMAs
-	// If no tasks are managed, aggressively decay lambdas to zero.
-	if tasks == 0 {
-		instLambda = 0
-	}
-
-	s.lambdaFast = ewmaUpdate(s.lambdaFast, instLambda, s.cfg.EWMAFastAlpha)
-	s.lambdaSlow = ewmaUpdate(s.lambdaSlow, instLambda, s.cfg.EWMASlowAlpha)
-	s.esFast = ewmaUpdate(s.esFast, instESec, s.cfg.EWMAFastAlpha)
-	s.esSlow = ewmaUpdate(s.esSlow, instESec, s.cfg.EWMASlowAlpha)
+	s.updateEWMAs(instLambda, instESec, tasks)
 
 	// Blend fast/slow to get a stable but responsive estimate.
-	// Weight the fast more when load is rising (simple heuristic).
-	rising := s.lambdaFast > s.lambdaSlow*risingThreshold
-	var lambdaHat, eSHat float64
-	if rising {
-		lambdaHat = fastBlendWeight*s.lambdaFast + (1-fastBlendWeight)*s.lambdaSlow
-		eSHat = fastBlendWeight*s.esFast + (1-fastBlendWeight)*s.esSlow
-	} else {
-		lambdaHat = slowBlendWeight*s.lambdaFast + (1-slowBlendWeight)*s.lambdaSlow
-		eSHat = slowBlendWeight*s.esFast + (1-slowBlendWeight)*s.esSlow
-	}
+	lambdaHat, eSHat := s.blendEWMAs()
 
 	// 3) Compute demand-based worker target from utilization setpoint
-	// Little’s Law-ish sizing: Needed ≈ ceil( (λ * E[S]) / target_util ).
-	const minTargetUtilization = 0.1
-	const maxTargetUtilization = 0.9
-	if s.cfg.TargetUtilization <= minTargetUtilization ||
-		s.cfg.TargetUtilization > maxTargetUtilization {
-		// Fall back on default
-		s.cfg.TargetUtilization = defaultTargetUtilization
-	}
-	demandWorkers := int(math.Ceil((lambdaHat * eSHat) / s.cfg.TargetUtilization))
-	// If there is no managed work, prefer drifting toward minimum.
-	if tasks == 0 {
-		demandWorkers = s.cfg.MinWorkers
-	}
+	demandWorkers := s.computeDemandWorkers(lambdaHat, eSHat, tasks)
 	s.log.Debug().Msgf("Demand-based workers: %d", demandWorkers)
 
 	// 4) Compute immediate pressure worker target (burst/backlog)
-	// If scheduler says we need more *right now* than we have available, propose enough workers to
-	// cover it, with optional burst headroom. Default immediate target assumes no special pressure.
-	immediate := 0
-	// Treat equality as pressure: if needed >= available, cover the gap with headroom.
-	if workersNeededNow >= available {
-		// Ensure target covers currently running plus the shortfall (needed - available).
-		shortfall := max(workersNeededNow-available, 0)
-		base := running + shortfall
-		immediate = int(math.Ceil(float64(base) * math.Max(s.cfg.BurstHeadroomFactor, 1.0)))
-	}
+	immediate := s.computeImmediatePressure(workersNeededNow, available, running)
 	s.log.Debug().Msgf("Immediate pressure: %d", immediate)
 
 	// 5) Combine signals and clamp. Always ensure we can cover workersNeededNow immediately.
@@ -129,74 +214,31 @@ func (s *poolScaler) scale(
 	s.log.Debug().Msgf("Desired workers after clamp: %d", desired)
 
 	// 6) Deadband / hysteresis around previous target worker count
-	// Convert % deadband to absolute units w.r.t prev.
-	deadband := int(math.Ceil(float64(prevTarget) * math.Max(s.cfg.DeadbandRatio, 0)))
-	// Allow tests/config to set zero deadband; only enforce min=1 if ratio > 0.
-	if s.cfg.DeadbandRatio > 0 && deadband < 1 {
-		deadband = 1
-	}
-	// Respect immediate pressure: if workersNeededNow is non-zero, bypass deadband for upscales.
-	// Also, when there is no managed work, bypass deadband for downscales toward min.
-	respectPressureUpscale := workersNeededNow > 0 && desired > prevTarget
-	noManagedWorkDownscale := desired < prevTarget && tasks == 0
-	if !respectPressureUpscale && !noManagedWorkDownscale {
-		if absInt(desired-prevTarget) <= deadband {
-			s.log.Debug().Msgf("Within deadband: suppress change")
-			return
-		}
-	}
-
-	//  7) Asymmetric cooldowns + step caps
-	nowIsAfter := func(t time.Time, d time.Duration) bool {
-		return t.IsZero() || now.Sub(t) >= d
-	}
-
-	var next int
-	if desired > prevTarget {
-		// Scale UP: fast path (short/no cooldown), optionally cap the jump.
-		if s.cfg.CooldownUp > 0 && !nowIsAfter(s.lastScaleUp, s.cfg.CooldownUp) {
-			// Too soon to scale up again.
-			return
-		}
-		if s.cfg.MaxStepUp > 0 {
-			next = prevTarget + min(s.cfg.MaxStepUp, desired-prevTarget)
-		} else {
-			next = desired // jump
-		}
-		s.lastScaleUp = now
-	} else { // desired < prev
-		// Scale DOWN: cautious path (long cooldown), small steps.
-		if s.cfg.CooldownDown > 0 && !nowIsAfter(s.lastScaleDown, s.cfg.CooldownDown) {
-			return
-		}
-		step := s.cfg.MaxStepDown
-		if step <= 0 {
-			step = 1
-		}
-		next = prevTarget - min(step, prevTarget-desired)
-		s.lastScaleDown = now
-	}
-	s.log.Debug().Msgf("Desired workers after cooldowns and caps: %d", next)
-
-	// Final clamp and enqueue.
-	next = clampInt(next, s.cfg.MinWorkers, s.cfg.MaxWorkers)
-	if next == prevTarget {
+	if s.applyDeadband(desired, prevTarget, workersNeededNow, tasks) {
+		s.log.Debug().Msgf("Within deadband: suppress change")
 		return
 	}
 
-	s.workerPool.enqueueWorkerScaling(int32(next))
+	// 7) Asymmetric cooldowns + step caps
+	next := s.applyCooldowns(desired, prevTarget, now)
+	s.log.Debug().Msgf("Desired workers after cooldowns and caps: %d", next)
 
-	s.log.Debug().
-		Int("prev", prevTarget).
-		Int("next", next).
-		Int("desired", desired).
-		Float64("lambda_fast", s.lambdaFast).
-		Float64("lambda_slow", s.lambdaSlow).
-		Float64("E[S]_fast", s.esFast).
-		Float64("E[S]_slow", s.esSlow).
-		Float64("target_util", s.cfg.TargetUtilization).
-		Float64("deadband_ratio", s.cfg.DeadbandRatio).
-		Msg("autoscale result")
+	// Final clamp and enqueue.
+	s.finalizeScaling(next, prevTarget, desired)
+}
+
+// updateEWMAs updates the dual-horizon exponentially weighted moving averages.
+func (s *poolScaler) updateEWMAs(instLambda, instESec float64, tasks int64) {
+	// If no tasks are managed, aggressively decay lambdas to zero.
+	lambda := instLambda
+	if tasks == 0 {
+		lambda = 0
+	}
+
+	s.lambdaFast = ewmaUpdate(s.lambdaFast, lambda, s.cfg.EWMAFastAlpha)
+	s.lambdaSlow = ewmaUpdate(s.lambdaSlow, lambda, s.cfg.EWMASlowAlpha)
+	s.esFast = ewmaUpdate(s.esFast, instESec, s.cfg.EWMAFastAlpha)
+	s.esSlow = ewmaUpdate(s.esSlow, instESec, s.cfg.EWMASlowAlpha)
 }
 
 // defaultPoolScaleCfg returns the default pool scale configuration.
