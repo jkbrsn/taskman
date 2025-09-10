@@ -9,6 +9,7 @@
   - An option to pause/stop a job
     - point would be to not have to remove a job and reinsert it when it should be resumed
     - could internally involve removing it from the queue, to an separate slice/structure, and then reinserting it when it should be resumed
+- Add Task Execution Timeouts: Implement per-task timeouts to prevent indefinite hangs, using context.WithTimeout in worker goroutines and propagating deadline exceeded errors.
 
 # feature ideas
 
@@ -18,3 +19,4 @@
 - Cron-like expressions for scheduling jobs. This would allow for more complex scheduling patterns than just a simple interval.
 - Custom consumers for jobs. If the same app wants to run jobs in the same pool that are different enough that they require different consumers, the app should be able to provide the option to have a custom consumer for each job.
 - A broadcast function, with a fan-out pattern, to send results to multiple channels in parallel.
+- Retry Logic with Backoff: Add configurable retry attempts for transient failures, using exponential backoff to avoid overwhelming downstream systems.
