@@ -66,8 +66,9 @@ func (e *poolExecutor) periodicWorkerScaling() {
 }
 
 // run runs the main loop of the pool executor.
-// revive:disable:function-length valid
-// revive:disable:cognitive-complexity valid
+// revive:disable:function-length valid exception
+// revive:disable:cognitive-complexity valid exception
+// revive:disable:cyclomatic valid exception
 func (e *poolExecutor) run() {
 	defer close(e.runDone)
 
@@ -91,6 +92,14 @@ func (e *poolExecutor) run() {
 	}
 
 	for {
+		// Check for context cancellation
+		select {
+		case <-e.ctx.Done():
+			return
+		default:
+			// Do nothing if the executor is running
+		}
+
 		// Snapshot only what's needed under lock
 		e.mu.Lock()
 		queueLen := e.jobQueue.Len()
@@ -140,10 +149,20 @@ func (e *poolExecutor) run() {
 			// dispatching the tasks, the job has been executed
 			e.jobExecChan <- struct{}{}
 
-			// Reschedule the job under lock
+			// Reschedule the job under lock; advance by whole cadences until in the future
 			e.mu.Lock()
 			if index < len(e.jobQueue) && e.jobQueue[index].ID == jobID {
-				e.jobQueue[index].NextExec = nextExec.Add(cadence)
+				// advance nextExec by N*cadence so that it's after now
+				if cadence > 0 {
+					if !nextExec.After(now) {
+						steps := 1 + int(now.Sub(nextExec)/cadence)
+						nextExec = nextExec.Add(time.Duration(steps) * cadence)
+					}
+				} else {
+					// cadence should be > 0 per validation; fallback to single step
+					nextExec = nextExec.Add(cadence)
+				}
+				e.jobQueue[index].NextExec = nextExec
 				heap.Fix(&e.jobQueue, index)
 			}
 			e.mu.Unlock()
@@ -180,6 +199,7 @@ func (e *poolExecutor) run() {
 
 // revive:enable:function-length
 // revive:enable:cognitive-complexity
+// revive:enable:cyclomatic
 
 // scaleWorkerPool scales the worker pool based on the current pool state and configuration.
 func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {

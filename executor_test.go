@@ -160,6 +160,7 @@ func (s *executorTestSuite) TestExecutorConcurrentExecution(t *testing.T) {
 	numJobsPerGoroutine := 100
 
 	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*numJobsPerGoroutine)
 	for id := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
@@ -172,11 +173,17 @@ func (s *executorTestSuite) TestExecutorConcurrentExecution(t *testing.T) {
 					ID:       jobID,
 					NextExec: time.Now().Add(cadence),
 				}
-				assert.NoError(t, exec.Schedule(job))
+				if err := exec.Schedule(job); err != nil {
+					errChan <- err
+				}
 			}
 		}(id)
 	}
 	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		assert.NoError(t, err)
+	}
 
 	// Allow at least one tick for all jobs
 	time.Sleep(cadence * 2)
@@ -297,17 +304,12 @@ func TestExecutor(t *testing.T) {
 		runExecutorTestSuite(t, &executorTestSuite{newExec: newExec})
 	})
 
-	/* t.Run("SingleExecutor", func(t *testing.T) {
+	t.Run("OnDemandExecutor", func(t *testing.T) {
 		newExec := func() executor {
-			return newSingleExecutor(
-				context.Background(),
-				zerolog.Nop(),
-				make(chan error),
-				&executorMetrics{},
-			)
+			return getOnDemandExecutor()
 		}
-		runSliceTestSuite(t, &executorTestSuite{newExec: newExec})
-	}) */
+		runExecutorTestSuite(t, &executorTestSuite{newExec: newExec})
+	})
 }
 
 // Benchmarks
@@ -333,6 +335,7 @@ func benchmarkSchedule(b *testing.B, factory func() executor) {
 func BenchmarkExecutorSchedule(b *testing.B) {
 	b.Run("Pool", func(b *testing.B) { benchmarkSchedule(b, getPoolExecutor) })
 	b.Run("Distributed", func(b *testing.B) { benchmarkSchedule(b, getDistExecutor) })
+	b.Run("OnDemand", func(b *testing.B) { benchmarkSchedule(b, getOnDemandExecutor) })
 }
 
 func benchmarkExecute(b *testing.B, factory func() executor) {
@@ -373,6 +376,7 @@ func benchmarkExecute(b *testing.B, factory func() executor) {
 func BenchmarkExecutorExecute(b *testing.B) {
 	b.Run("Pool", func(b *testing.B) { benchmarkExecute(b, getPoolExecutor) })
 	b.Run("Distributed", func(b *testing.B) { benchmarkExecute(b, getDistExecutor) })
+	b.Run("OnDemand", func(b *testing.B) { benchmarkExecute(b, getOnDemandExecutor) })
 }
 
 // Lightweight int->string for benchmark IDs
@@ -416,7 +420,20 @@ func getDistExecutor() executor {
 		&executorMetrics{},
 		defaultBufferSize,
 		1,
-		true,
-		0,
+		true, // run in parallel
+		0,    // no parallelism limit
+	)
+}
+
+func getOnDemandExecutor() executor {
+	return newOnDemandExecutor(
+		context.Background(),
+		zerolog.Nop(),
+		make(chan error, defaultBufferSize),
+		&executorMetrics{},
+		defaultBufferSize,
+		1,
+		true, // run in parallel
+		0,    // no parallelism limit
 	)
 }

@@ -8,15 +8,13 @@ An efficient and scalable task manager for in-process task scheduling in Go appl
 
 - Defines the interface `Task`, which when implemented allows for easy inclusion of existing structures in the manager.
 - Grouping of tasks into `Job`s for near-simultaneous execution.
-- Utilizes a worker pool setup.
-  - This allows the manager to limit the number of spawned goroutines to the number of workers in the pool, and thus keeping memory usage down.
-  - A priority queue is used to dispatch jobs for execution in the worker pool. The queue is a min heap, minimized by shortest time until next execution.
-- Dynamic worker pool scaling.
-  - The worker pool scales based on the state of the queue;
-    - Largest parallel execution of tasks
-    - Tasks executed per second
-    - Average task execution time
-  - The scaling algorithm is designed to optimize for worker availability, and as such errs on the safe side when it comes to scaling down.
+- Multiple execution modes:
+  - **Pool Mode** (default): Utilizes a worker pool setup with dynamic scaling.
+    - Limits the number of spawned goroutines to the number of workers in the pool, keeping memory usage down.
+    - A priority queue dispatches jobs for execution in the worker pool. The queue is a min heap, minimized by shortest time until next execution.
+    - Dynamic worker pool scaling based on queue state (parallel execution, tasks/sec, average execution time).
+  - **Distributed Mode**: Each job runs as its own long-lived goroutine with configurable parallelism and catch-up behavior.
+  - **On-Demand Mode**: Hybrid approach using a priority queue but spawning short-lived goroutines per job execution.
 
 ## Install
 
@@ -63,7 +61,8 @@ func (s SomeStruct) Execute() error {
 
 // Utilize the implementation when adding a Job
 manager := New(
-  WithMinWorkerCount(4),
+  WithMode(ModePool), // or ModeDistributed, ModeOnDemand
+  WithMPMinWorkerCount(4), // Pool mode options
   WithChannelSize(16),
 )
 defer manager.Stop()
