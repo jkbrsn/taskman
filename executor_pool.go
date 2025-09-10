@@ -148,10 +148,20 @@ func (e *poolExecutor) run() {
 			// dispatching the tasks, the job has been executed
 			e.jobExecChan <- struct{}{}
 
-			// Reschedule the job under lock
+			// Reschedule the job under lock; advance by whole cadences until in the future
 			e.mu.Lock()
 			if index < len(e.jobQueue) && e.jobQueue[index].ID == jobID {
-				e.jobQueue[index].NextExec = nextExec.Add(cadence)
+				// advance nextExec by N*cadence so that it's after now
+				if cadence > 0 {
+					if !nextExec.After(now) {
+						steps := 1 + int(now.Sub(nextExec)/cadence)
+						nextExec = nextExec.Add(time.Duration(steps) * cadence)
+					}
+				} else {
+					// cadence should be > 0 per validation; fallback to single step
+					nextExec = nextExec.Add(cadence)
+				}
+				e.jobQueue[index].NextExec = nextExec
 				heap.Fix(&e.jobQueue, index)
 			}
 			e.mu.Unlock()
