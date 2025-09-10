@@ -1,9 +1,5 @@
 # Plans for the go-taskman package
 
-## TODO v0.5.0
-
-- Update module name to reflect new name `taskman` (from `go-taskman`)
-
 ## TODO v0.x.x
 
 - Add more functional options

@@ -1,4 +1,4 @@
-module github.com/jkbrsn/go-taskman
+module github.com/jkbrsn/taskman
 
 go 1.24.3
 
