@@ -25,10 +25,11 @@ const (
 
 // ExecMode configures how tasks are executed.
 // ModePool executes tasks using a shared worker pool; ModeDistributed executes tasks per job with
-// each job running as its own worker.
+// each job running as its own worker; ModeOnDemand executes tasks in on-demand goroutines.
 const (
 	ModePool ExecMode = iota
 	ModeDistributed
+	ModeOnDemand
 )
 
 // ExecMode is the execution mode for TaskManager.
@@ -231,6 +232,17 @@ func New(opts ...TMOption) *TaskManager {
 	switch tm.execMode {
 	case ModeDistributed:
 		tm.exec = newDistributedExecutor(
+			tm.ctx,
+			tm.log,
+			tm.errorChan,
+			tm.metrics,
+			tm.channelBufferSize,
+			tm.deCatchUpMax,
+			tm.deParallel,
+			tm.deMaxPar,
+		)
+	case ModeOnDemand:
+		tm.exec = newOnDemandExecutor(
 			tm.ctx,
 			tm.log,
 			tm.errorChan,
