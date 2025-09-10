@@ -242,6 +242,7 @@ func (e *onDemandExecutor) Stop() {
 // run runs the main loop of the on-demand executor.
 // revive:disable:function-length valid exception
 // revive:disable:cognitive-complexity valid exception
+// revive:disable:cyclomatic valid exception
 func (e *onDemandExecutor) run() {
 	defer close(e.runDone)
 
@@ -265,6 +266,14 @@ func (e *onDemandExecutor) run() {
 	}
 
 	for {
+		// Check for context cancellation
+		select {
+		case <-e.ctx.Done():
+			return
+		default:
+			// Do nothing if the executor is running
+		}
+
 		// Snapshot only what's needed under lock
 		e.mu.Lock()
 		queueLen := e.jobQueue.Len()
@@ -311,7 +320,9 @@ func (e *onDemandExecutor) run() {
 
 			// Reschedule the job under lock, with catch-up
 			e.mu.Lock()
-			if jobPtr != nil && jobPtr.index < len(e.jobQueue) && e.jobQueue[jobPtr.index].ID == jobID {
+			if jobPtr != nil &&
+				jobPtr.index < len(e.jobQueue) &&
+				e.jobQueue[jobPtr.index].ID == jobID {
 				// Advance "next" forward by whole cadences until it lands in the future,
 				// but cap the number of immediate catch-ups to catchUpMax.
 				skips := 0
@@ -361,6 +372,7 @@ func (e *onDemandExecutor) run() {
 	}
 }
 
+// revive:enable:cyclomatic
 // revive:enable:function-length
 // revive:enable:cognitive-complexity
 

@@ -91,6 +91,14 @@ func (e *poolExecutor) run() {
 	}
 
 	for {
+		// Check for context cancellation
+		select {
+		case <-e.ctx.Done():
+			return
+		default:
+			// Do nothing if the executor is running
+		}
+
 		// Snapshot only what's needed under lock
 		e.mu.Lock()
 		queueLen := e.jobQueue.Len()
