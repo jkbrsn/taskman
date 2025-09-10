@@ -160,6 +160,7 @@ func (s *executorTestSuite) TestExecutorConcurrentExecution(t *testing.T) {
 	numJobsPerGoroutine := 100
 
 	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*numJobsPerGoroutine)
 	for id := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
@@ -172,11 +173,17 @@ func (s *executorTestSuite) TestExecutorConcurrentExecution(t *testing.T) {
 					ID:       jobID,
 					NextExec: time.Now().Add(cadence),
 				}
-				assert.NoError(t, exec.Schedule(job))
+				if err := exec.Schedule(job); err != nil {
+					errChan <- err
+				}
 			}
 		}(id)
 	}
 	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		assert.NoError(t, err)
+	}
 
 	// Allow at least one tick for all jobs
 	time.Sleep(cadence * 2)
