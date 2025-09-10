@@ -297,17 +297,12 @@ func TestExecutor(t *testing.T) {
 		runExecutorTestSuite(t, &executorTestSuite{newExec: newExec})
 	})
 
-	/* t.Run("SingleExecutor", func(t *testing.T) {
+	t.Run("OnDemandExecutor", func(t *testing.T) {
 		newExec := func() executor {
-			return newSingleExecutor(
-				context.Background(),
-				zerolog.Nop(),
-				make(chan error),
-				&executorMetrics{},
-			)
+			return getOnDemandExecutor()
 		}
-		runSliceTestSuite(t, &executorTestSuite{newExec: newExec})
-	}) */
+		runExecutorTestSuite(t, &executorTestSuite{newExec: newExec})
+	})
 }
 
 // Benchmarks
@@ -333,6 +328,7 @@ func benchmarkSchedule(b *testing.B, factory func() executor) {
 func BenchmarkExecutorSchedule(b *testing.B) {
 	b.Run("Pool", func(b *testing.B) { benchmarkSchedule(b, getPoolExecutor) })
 	b.Run("Distributed", func(b *testing.B) { benchmarkSchedule(b, getDistExecutor) })
+	b.Run("OnDemand", func(b *testing.B) { benchmarkSchedule(b, getOnDemandExecutor) })
 }
 
 func benchmarkExecute(b *testing.B, factory func() executor) {
@@ -373,6 +369,7 @@ func benchmarkExecute(b *testing.B, factory func() executor) {
 func BenchmarkExecutorExecute(b *testing.B) {
 	b.Run("Pool", func(b *testing.B) { benchmarkExecute(b, getPoolExecutor) })
 	b.Run("Distributed", func(b *testing.B) { benchmarkExecute(b, getDistExecutor) })
+	b.Run("OnDemand", func(b *testing.B) { benchmarkExecute(b, getOnDemandExecutor) })
 }
 
 // Lightweight int->string for benchmark IDs
@@ -410,6 +407,19 @@ func getPoolExecutor() executor {
 
 func getDistExecutor() executor {
 	return newDistributedExecutor(
+		context.Background(),
+		zerolog.Nop(),
+		make(chan error, defaultBufferSize),
+		&executorMetrics{},
+		defaultBufferSize,
+		1,
+		true,
+		0,
+	)
+}
+
+func getOnDemandExecutor() executor {
+	return newOnDemandExecutor(
 		context.Background(),
 		zerolog.Nop(),
 		make(chan error, defaultBufferSize),
