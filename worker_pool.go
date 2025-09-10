@@ -18,6 +18,14 @@ const (
 	defaultDownScaleMinInterval = time.Second * 30
 )
 
+// workerPoolCfg configures some parameters of a worker pool.
+type workerPoolCfg struct {
+	initialWorkers       int
+	maxWorkers           int
+	utilizationThreshold float64
+	downScaleMinInterval time.Duration
+}
+
 // workerPool manages a pool of workers that execute tasks.
 type workerPool struct {
 	log zerolog.Logger
@@ -39,6 +47,7 @@ type workerPool struct {
 	lastDownScale        time.Time     // Last time a downscaling event occurred
 	utilizationThreshold float64       // configurable per pool; default defaultUtilizationThreshold
 	downScaleMinInterval time.Duration // configurable per pool; default defaultDownScaleMinInterval
+	maxWorkers           int           // Maximum number of workers allowed
 
 	mu sync.Mutex
 	wg sync.WaitGroup
@@ -84,34 +93,31 @@ func (wp *workerPool) addWorkers(nWorkers int) {
 
 // adjustWorkerCount adjusts the number of workers in the pool to match the target worker count.
 func (wp *workerPool) adjustWorkerCount(newTargetCount int32) {
-	// Hard cap: never allow running workers to exceed defaultMaxWorkerCount
-	// TODO: move to using pool config instead of default
-	if newTargetCount > int32(defaultMaxWorkerCount) {
-		newTargetCount = int32(defaultMaxWorkerCount)
-	}
+	// Hard cap: never allow running workers to exceed maxWorkers
+	targetCount := min(newTargetCount, int32(wp.maxWorkers))
 
 	wp.workerScalingEvents.Add(1)
 	currentTarget := wp.targetWorkerCount()
 
 	// Update desired target count
-	wp.workerCountTarget.Store(newTargetCount)
+	wp.workerCountTarget.Store(targetCount)
 
 	switch {
-	case newTargetCount > currentTarget:
+	case targetCount > currentTarget:
 		// Scale up
-		wp.log.Debug().Msgf("Scaling worker count UP from %d to %d", currentTarget, newTargetCount)
-		wp.addWorkers(int(newTargetCount - currentTarget))
+		wp.log.Debug().Msgf("Scaling worker count UP from %d to %d", currentTarget, targetCount)
+		wp.addWorkers(int(targetCount - currentTarget))
 
-	case newTargetCount < currentTarget:
+	case targetCount < currentTarget:
 		// Scale down based on utilization and debounce
 		if wp.utilization() < wp.utilizationThreshold &&
 			time.Since(wp.lastDownScale) >= wp.downScaleMinInterval {
 			wp.log.Debug().Msgf(
 				"Scaling worker count DOWN from %d to %d",
 				currentTarget,
-				newTargetCount,
+				targetCount,
 			)
-			if err := wp.stopWorkers(int(currentTarget - newTargetCount)); err != nil {
+			if err := wp.stopWorkers(int(currentTarget - targetCount)); err != nil {
 				wp.log.Warn().Err(err).Msg("stopWorkers failed")
 			} else {
 				wp.lastDownScale = time.Now()
@@ -172,7 +178,7 @@ func (wp *workerPool) enqueueWorkerScaling(target int32) {
 	}
 
 	// Optimistically store target immediately so metrics reflect intention without waiting.
-	//wp.workerCountTarget.Store(target)
+	// wp.workerCountTarget.Store(target)
 	// Attempt to send, but abort if stopPoolChan closes
 	select {
 	case wp.workerCountChan <- target:
@@ -392,11 +398,11 @@ func (wp *workerPool) utilization() float64 {
 // newWorkerPool creates and returns a new worker pool.
 func newWorkerPool(
 	logger zerolog.Logger,
-	initialWorkerCount int,
 	errorChan chan error,
 	taskExecChan chan time.Duration,
 	taskChan chan Task,
 	workerPoolDone chan struct{},
+	cfg workerPoolCfg,
 ) *workerPool {
 	log := logger.With().Str("component", "worker_pool").Logger()
 
@@ -408,11 +414,12 @@ func newWorkerPool(
 		taskChan:             taskChan,
 		workerCountChan:      make(chan int32, 1), // Buffered channel to prevent blocking
 		workerPoolDone:       workerPoolDone,
-		utilizationThreshold: defaultUtilizationThreshold,
-		downScaleMinInterval: defaultDownScaleMinInterval,
+		utilizationThreshold: cfg.utilizationThreshold,
+		downScaleMinInterval: cfg.downScaleMinInterval,
+		maxWorkers:           cfg.maxWorkers,
 	}
-	pool.addWorkers(initialWorkerCount)
-	pool.workerCountTarget.Store(int32(initialWorkerCount))
+	pool.addWorkers(cfg.initialWorkers)
+	pool.workerCountTarget.Store(int32(cfg.initialWorkers))
 
 	// Record initial sizing as a scaling event to reflect startup sizing in metrics
 	pool.workerScalingEvents.Add(1)

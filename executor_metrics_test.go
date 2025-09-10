@@ -79,7 +79,9 @@ func TestUpdateMetrics(t *testing.T) {
 		expectedTasksTotal, metrics.snapshot().TasksManaged)
 
 	// Verify that tasksPerSecond is updated correctly
-	expectedTasksPerSecond = initialTasksPerSecond + float32(10)/float32((5*time.Second).Seconds()) + float32(10)/float32((2*time.Second).Seconds())
+	expectedTasksPerSecond = initialTasksPerSecond +
+		float32(10)/float32((5*time.Second).Seconds()) +
+		float32(10)/float32((2*time.Second).Seconds())
 	assert.InDelta(
 		t, expectedTasksPerSecond, metrics.snapshot().TasksPerSecond,
 		0.001, "Expected tasksPerSecond to be %f, got %f",

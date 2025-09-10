@@ -416,15 +416,18 @@ func (e *poolExecutor) Start() {
 	taskExecChan := make(chan time.Duration, e.channelBufferSize)
 	e.workerPool = newWorkerPool(
 		e.log, // Pass on logger instance
-		e.minWorkerCount,
 		e.errorChan,
 		taskExecChan,
 		e.taskChan,
 		e.workerPoolDone,
+		workerPoolCfg{
+			initialWorkers:       e.minWorkerCount,
+			maxWorkers:           e.poolScaler.cfg.MaxWorkers,
+			utilizationThreshold: e.poolScaler.cfg.TargetUtilization,
+			downScaleMinInterval: e.poolScaler.cfg.CooldownDown,
+		},
 	)
-	// Test-friendly: shrink downscale debounce so scaler-driven downsizing is observable quickly.
-	e.workerPool.utilizationThreshold = 0.0
-	e.workerPool.downScaleMinInterval = 100 * time.Millisecond
+
 	e.poolScaler.workerPool = e.workerPool
 
 	go e.metrics.consumeTaskExecChan(taskExecChan)

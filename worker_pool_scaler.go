@@ -8,8 +8,12 @@ import (
 )
 
 const (
-	defaultWorkerUtilization = 0.70
-	defaultWorkerDeadband    = 0.10
+	defaultTargetUtilization = 0.70
+	defaultDeadbandRatio     = 0.10
+	minExecutionTimeEpsilon  = 1e-6 // Minimum execution time to avoid divide-by-zero
+	risingThreshold          = 1.02 // Threshold for detecting rising load
+	fastBlendWeight          = 0.7  // Weight for fast EWMA in rising load
+	slowBlendWeight          = 0.4  // Weight for slow EWMA in stable load
 )
 
 // PoolScaleConfig tunes the worker pool control loop.
@@ -62,9 +66,9 @@ func (s *poolScaler) scale(
 	lambda, eSec, tasks := s.metrics.taskSnapshot() // tasks/sec, avg sec, tasks managed
 	instLambda := lambda                            // tasks/sec
 	instESec := eSec                                // sec per task
-	if instESec < 1e-6 {
+	if instESec < minExecutionTimeEpsilon {
 		// Avoid divide-by-zero; if we have no recent tasks, assume tiny service time.
-		instESec = 1e-6
+		instESec = minExecutionTimeEpsilon
 	}
 
 	// 2) Update dual-horizon EWMAs
@@ -80,14 +84,14 @@ func (s *poolScaler) scale(
 
 	// Blend fast/slow to get a stable but responsive estimate.
 	// Weight the fast more when load is rising (simple heuristic).
-	rising := s.lambdaFast > s.lambdaSlow*1.02
+	rising := s.lambdaFast > s.lambdaSlow*risingThreshold
 	var lambdaHat, eSHat float64
 	if rising {
-		lambdaHat = 0.7*s.lambdaFast + 0.3*s.lambdaSlow
-		eSHat = 0.7*s.esFast + 0.3*s.esSlow
+		lambdaHat = fastBlendWeight*s.lambdaFast + (1-fastBlendWeight)*s.lambdaSlow
+		eSHat = fastBlendWeight*s.esFast + (1-fastBlendWeight)*s.esSlow
 	} else {
-		lambdaHat = 0.4*s.lambdaFast + 0.6*s.lambdaSlow
-		eSHat = 0.4*s.esFast + 0.6*s.esSlow
+		lambdaHat = slowBlendWeight*s.lambdaFast + (1-slowBlendWeight)*s.lambdaSlow
+		eSHat = slowBlendWeight*s.esFast + (1-slowBlendWeight)*s.esSlow
 	}
 
 	// 3) Compute demand-based worker target from utilization setpoint
@@ -97,7 +101,7 @@ func (s *poolScaler) scale(
 	if s.cfg.TargetUtilization <= minTargetUtilization ||
 		s.cfg.TargetUtilization > maxTargetUtilization {
 		// Fall back on default
-		s.cfg.TargetUtilization = defaultWorkerUtilization
+		s.cfg.TargetUtilization = defaultTargetUtilization
 	}
 	demandWorkers := int(math.Ceil((lambdaHat * eSHat) / s.cfg.TargetUtilization))
 	// If there is no managed work, prefer drifting toward minimum.
@@ -202,8 +206,8 @@ func defaultPoolScaleCfg() PoolScaleConfig {
 	return PoolScaleConfig{
 		MaxWorkers:          defaultMaxWorkerCount,
 		MinWorkers:          defaultMinWorkerCount,
-		TargetUtilization:   defaultWorkerUtilization,
-		DeadbandRatio:       defaultWorkerDeadband,
+		TargetUtilization:   defaultTargetUtilization,
+		DeadbandRatio:       defaultDeadbandRatio,
 		CooldownUp:          2 * time.Second,
 		CooldownDown:        45 * time.Second,
 		MaxStepUp:           0, // 0 = no cap (jump)

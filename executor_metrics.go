@@ -98,7 +98,11 @@ func (m *executorMetrics) snapshot() metricsState {
 // - tasksPerSec: current tasks/sec (float64)
 // - taskAvgExecSec: average task execution time in seconds (float64)
 // - tasks: number of managed tasks (int64)
-func (m *executorMetrics) taskSnapshot() (tasksPerSec float64, taskAvgExecSec float64, tasks int64) {
+func (m *executorMetrics) taskSnapshot() (
+	tasksPerSec float64,
+	taskAvgExecSec float64,
+	tasks int64,
+) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -107,11 +111,11 @@ func (m *executorMetrics) taskSnapshot() (tasksPerSec float64, taskAvgExecSec fl
 
 // updateCadence updates the metrics for a change in cadence only. If called with
 // newTaskCount != 0, the metrics will not be updated correctly.
-func (m *executorMetrics) updateCadence(newTaskCount int, old, new time.Duration) {
+func (m *executorMetrics) updateCadence(newTaskCount int, oldDur, newDur time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	delta := (1/float32(new.Seconds()) - 1/float32(old.Seconds()))
+	delta := (1/float32(newDur.Seconds()) - 1/float32(oldDur.Seconds()))
 	m.s.TasksPerSecond += float32(newTaskCount) * delta
 	m.s.JobsPerSecond += delta
 }

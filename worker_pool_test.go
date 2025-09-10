@@ -14,7 +14,19 @@ func getWorkerPool(nWorkers int) *workerPool {
 	taskExecChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	return newWorkerPool(testLogger, nWorkers, errorChan, taskExecChan, taskChan, workerPoolDone)
+	return newWorkerPool(
+		testLogger,
+		errorChan,
+		taskExecChan,
+		taskChan,
+		workerPoolDone,
+		workerPoolCfg{
+			initialWorkers:       nWorkers,
+			maxWorkers:           10,
+			utilizationThreshold: defaultUtilizationThreshold,
+			downScaleMinInterval: defaultDownScaleMinInterval,
+		},
+	)
 }
 
 func TestNewWorkerPool(t *testing.T) {
@@ -47,7 +59,19 @@ func TestWorkerPoolTaskExecution(t *testing.T) {
 	taskExecChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(testLogger, 1, errorChan, taskExecChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(
+		testLogger,
+		errorChan,
+		taskExecChan,
+		taskChan,
+		workerPoolDone,
+		workerPoolCfg{
+			initialWorkers:       1,
+			maxWorkers:           10,
+			utilizationThreshold: defaultUtilizationThreshold,
+			downScaleMinInterval: defaultDownScaleMinInterval,
+		},
+	)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for worker to start
@@ -87,7 +111,19 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 	taskExecChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(testLogger, 1, errorChan, taskExecChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(
+		testLogger,
+		errorChan,
+		taskExecChan,
+		taskChan,
+		workerPoolDone,
+		workerPoolCfg{
+			initialWorkers:       1,
+			maxWorkers:           10,
+			utilizationThreshold: defaultUtilizationThreshold,
+			downScaleMinInterval: defaultDownScaleMinInterval,
+		},
+	)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for worker to start
@@ -125,7 +161,19 @@ func TestWorkerPoolExecutionPanic(t *testing.T) {
 	taskExecChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(testLogger, 1, errorChan, taskExecChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(
+		testLogger,
+		errorChan,
+		taskExecChan,
+		taskChan,
+		workerPoolDone,
+		workerPoolCfg{
+			initialWorkers:       1,
+			maxWorkers:           10,
+			utilizationThreshold: defaultUtilizationThreshold,
+			downScaleMinInterval: defaultDownScaleMinInterval,
+		},
+	)
 	defer pool.stop()
 
 	time.Sleep(5 * time.Millisecond) // Wait for worker to start
@@ -164,7 +212,19 @@ func TestWorkerPoolBusyWorkers(t *testing.T) {
 	taskExecChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(testLogger, 2, errorChan, taskExecChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(
+		testLogger,
+		errorChan,
+		taskExecChan,
+		taskChan,
+		workerPoolDone,
+		workerPoolCfg{
+			initialWorkers:       2,
+			maxWorkers:           10,
+			utilizationThreshold: defaultUtilizationThreshold,
+			downScaleMinInterval: defaultDownScaleMinInterval,
+		},
+	)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for workers to start
@@ -223,7 +283,19 @@ func TestStopWorker(t *testing.T) {
 	taskExecChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(testLogger, 2, errorChan, taskExecChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(
+		testLogger,
+		errorChan,
+		taskExecChan,
+		taskChan,
+		workerPoolDone,
+		workerPoolCfg{
+			initialWorkers:       2,
+			maxWorkers:           10,
+			utilizationThreshold: defaultUtilizationThreshold,
+			downScaleMinInterval: defaultDownScaleMinInterval,
+		},
+	)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for workers to start
@@ -288,7 +360,19 @@ func TestStopWorkers(t *testing.T) {
 	taskExecChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(testLogger, 6, errorChan, taskExecChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(
+		testLogger,
+		errorChan,
+		taskExecChan,
+		taskChan,
+		workerPoolDone,
+		workerPoolCfg{
+			initialWorkers:       6,
+			maxWorkers:           10,
+			utilizationThreshold: defaultUtilizationThreshold,
+			downScaleMinInterval: defaultDownScaleMinInterval,
+		},
+	)
 	defer pool.stop()
 
 	time.Sleep(10 * time.Millisecond) // Wait for workers to start
@@ -360,7 +444,19 @@ func TestWorkerPoolUtilization(t *testing.T) {
 	taskExecChan := make(chan time.Duration, 1)
 	taskChan := make(chan Task, 1)
 	workerPoolDone := make(chan struct{})
-	pool := newWorkerPool(testLogger, 4, errorChan, taskExecChan, taskChan, workerPoolDone)
+	pool := newWorkerPool(
+		testLogger,
+		errorChan,
+		taskExecChan,
+		taskChan,
+		workerPoolDone,
+		workerPoolCfg{
+			initialWorkers:       4,
+			maxWorkers:           10,
+			utilizationThreshold: defaultUtilizationThreshold,
+			downScaleMinInterval: defaultDownScaleMinInterval,
+		},
+	)
 	defer pool.stop()
 
 	time.Sleep(5 * time.Millisecond) // Wait for workers to start

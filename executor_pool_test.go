@@ -128,7 +128,8 @@ func TestPoolExecutor_PoolScaler(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 
 		got := exec.workerPool.workerCountTarget.Load()
-		require.Greater(t, got, prev, "expected target workers to increase (prev=%d, got=%d)", prev, got)
+		require.Greater(t, got, prev,
+			"expected target workers to increase (prev=%d, got=%d)", prev, got)
 	})
 
 	t.Run("ImmediatePressure_OverridesDemand", func(t *testing.T) {
@@ -162,7 +163,8 @@ func TestPoolExecutor_PoolScaler(t *testing.T) {
 		wantMin := running0 + shortfall
 
 		if got <= prev || got < wantMin {
-			t.Fatalf("expected target to increase and cover immediate need; prev=%d running0=%d avail0=%d wantMin=%d got=%d",
+			t.Fatalf("expected target to increase and cover immediate need; "+
+				"prev=%d running0=%d avail0=%d wantMin=%d got=%d",
 				prev, running0, avail0, wantMin, got)
 		}
 	})
@@ -336,7 +338,8 @@ func TestPoolExecutor_PoolScaler(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 		runningBefore := exec.workerPool.runningWorkers()
-		require.GreaterOrEqual(t, runningBefore, int32(4), "expected workers to scale up before testing downscale")
+		require.GreaterOrEqual(t, runningBefore, int32(4),
+			"expected workers to scale up before testing downscale")
 
 		// Request downscale to min and wait for workers to stop.
 		exec.poolScaler.scale(time.Now(), 0)
@@ -348,7 +351,8 @@ func TestPoolExecutor_PoolScaler(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 		runningAfter := exec.workerPool.runningWorkers()
-		require.Equal(t, int32(exec.minWorkerCount), runningAfter, "expected workers to stop down to min")
+		require.Equal(t, int32(exec.minWorkerCount), runningAfter,
+			"expected workers to stop down to min")
 		require.Less(t, runningAfter, runningBefore, "expected running workers to decrease")
 	})
 }

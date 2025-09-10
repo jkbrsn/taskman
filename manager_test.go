@@ -571,7 +571,7 @@ Loop:
 	assert.Contains(t, receivedErrors, "error 2")
 }
 
-func (s *managerTestSuite) TestManagerMetrics(t *testing.T) {
+func (*managerTestSuite) TestManagerMetrics(t *testing.T) {
 	workerCount := 8
 	// Create a manager with specific options for this test
 	manager := New(
@@ -610,20 +610,32 @@ func (s *managerTestSuite) TestManagerMetrics(t *testing.T) {
 	assert.Equal(t, taskCount, metrics.ManagedTasks, "Expected %d task in queue", taskCount)
 
 	// Verify task execution metrics
-	assert.GreaterOrEqual(t, metrics.JobsTotalExecutions, expectedExecutions, "Expected at least %d total jobs to have been counted", expectedExecutions)
-	assert.GreaterOrEqual(t, metrics.TasksTotalExecutions, expectedExecutions*taskCount, "Expected at least %d total task to have been counted", expectedExecutions*taskCount)
-	assert.GreaterOrEqual(t, metrics.TasksAverageExecTime, executionTime, "Expected task execution time to be at least %v", executionTime)
-	assert.InDelta(t, 1/cadence.Seconds(), metrics.JobsPerSecond, 0.1, "Expected jobs per second to be around %f", 1/cadence.Seconds())
-	assert.InDelta(t, float64(taskCount)/cadence.Seconds(), metrics.TasksPerSecond, 0.1, "Expected tasks per second to be around %f", float64(taskCount)/cadence.Seconds())
+	assert.GreaterOrEqual(t, metrics.JobsTotalExecutions, expectedExecutions,
+		"Expected at least %d total jobs to have been counted", expectedExecutions)
+	assert.GreaterOrEqual(t, metrics.TasksTotalExecutions, expectedExecutions*taskCount,
+		"Expected at least %d total task to have been counted", expectedExecutions*taskCount)
+	assert.GreaterOrEqual(t, metrics.TasksAverageExecTime, executionTime,
+		"Expected task execution time to be at least %v", executionTime)
+	assert.InDelta(t, 1/cadence.Seconds(), metrics.JobsPerSecond, 0.1,
+		"Expected jobs per second to be around %f", 1/cadence.Seconds())
+	assert.InDelta(t, float64(taskCount)/cadence.Seconds(), metrics.TasksPerSecond, 0.1,
+		"Expected tasks per second to be around %f", float64(taskCount)/cadence.Seconds())
 
 	// Verify worker pool metrics
-	assert.GreaterOrEqual(t, metrics.PoolMetrics.WorkersActive, 0, "Expected active workers to be >= 0")
-	assert.Equal(t, workerCount, metrics.PoolMetrics.WorkersRunning, "Expected %d running workers", workerCount)
-	assert.Equal(t, workerCount, metrics.PoolMetrics.WorkerCountTarget, "Expected worker count target to be %d", workerCount)
-	assert.GreaterOrEqual(t, metrics.PoolMetrics.WorkerUtilization, float32(0), "Expected worker utilization to be >= 0")
-	assert.LessOrEqual(t, metrics.PoolMetrics.WorkerUtilization, float32(1), "Expected worker utilization to be <= 1")
-	assert.GreaterOrEqual(t, metrics.PoolMetrics.WorkerScalingEvents, 1, "Expected at least 1 worker scaling event")
-	assert.Equal(t, taskCount, metrics.PoolMetrics.WidestJobWidth, "Expected max job width to be %d task", taskCount)
+	assert.GreaterOrEqual(t, metrics.PoolMetrics.WorkersActive, 0,
+		"Expected active workers to be >= 0")
+	assert.Equal(t, workerCount, metrics.PoolMetrics.WorkersRunning,
+		"Expected %d running workers", workerCount)
+	assert.Equal(t, workerCount, metrics.PoolMetrics.WorkerCountTarget,
+		"Expected worker count target to be %d", workerCount)
+	assert.GreaterOrEqual(t, metrics.PoolMetrics.WorkerUtilization, float32(0),
+		"Expected worker utilization to be >= 0")
+	assert.LessOrEqual(t, metrics.PoolMetrics.WorkerUtilization, float32(1),
+		"Expected worker utilization to be <= 1")
+	assert.GreaterOrEqual(t, metrics.PoolMetrics.WorkerScalingEvents, 1,
+		"Expected at least 1 worker scaling event")
+	assert.Equal(t, taskCount, metrics.PoolMetrics.WidestJobWidth,
+		"Expected max job width to be %d task", taskCount)
 }
 
 func (s *managerTestSuite) TestTaskExecutionAt(t *testing.T) {
@@ -721,7 +733,7 @@ func (s *managerTestSuite) TestTaskExecutionAt(t *testing.T) {
 	})
 }
 
-func (s *managerTestSuite) TestGoroutineLeak(t *testing.T) {
+func (*managerTestSuite) TestGoroutineLeak(t *testing.T) {
 	// Get initial goroutine count
 	initialGoroutines := runtime.NumGoroutine()
 
