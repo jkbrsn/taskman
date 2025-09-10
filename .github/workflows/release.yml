@@ -52,7 +52,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "$(printf '%s\n' "$OLD_VERSION" "$NEW_VERSION" | sort -V | head -n1)" != "$OLD_VERSION" ]]; then
+          if [[ "$(printf '%s\n' "$OLD_VERSION" "$NEW_VERSION" | sort -V | tail -n1)" != "$OLD_VERSION" ]]; then
             : # OK, NEW_VERSION > OLD_VERSION
           else
             echo "::error::New version ($NEW_VERSION) must be greater than old ($OLD_VERSION)"
