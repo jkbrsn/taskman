@@ -420,8 +420,8 @@ func getDistExecutor() executor {
 		&executorMetrics{},
 		defaultBufferSize,
 		1,
-		true,
-		0,
+		true, // run in parallel
+		0,    // no parallelism limit
 	)
 }
 
@@ -433,7 +433,7 @@ func getOnDemandExecutor() executor {
 		&executorMetrics{},
 		defaultBufferSize,
 		1,
-		true,
-		0,
+		true, // run in parallel
+		0,    // no parallelism limit
 	)
 }
