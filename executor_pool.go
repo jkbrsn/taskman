@@ -68,6 +68,7 @@ func (e *poolExecutor) periodicWorkerScaling() {
 // run runs the main loop of the pool executor.
 // revive:disable:function-length valid exception
 // revive:disable:cognitive-complexity valid exception
+// revive:disable:cyclomatic valid exception
 func (e *poolExecutor) run() {
 	defer close(e.runDone)
 
@@ -198,6 +199,7 @@ func (e *poolExecutor) run() {
 
 // revive:enable:function-length
 // revive:enable:cognitive-complexity
+// revive:enable:cyclomatic
 
 // scaleWorkerPool scales the worker pool based on the current pool state and configuration.
 func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
