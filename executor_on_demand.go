@@ -34,6 +34,9 @@ type onDemandExecutor struct {
 	jobExecChan  chan struct{}
 	metrics      *executorMetrics
 
+	// Synchronization for executing jobs
+	executingJobs sync.WaitGroup // Tracks currently executing jobs
+
 	// Configurable options
 	channelBufferSize int
 	catchUpMax        int  // max immediate catch-ups per tick when behind schedule
@@ -223,6 +226,9 @@ func (e *onDemandExecutor) Stop() {
 		// Wait for run loop to exit
 		<-e.runDone
 
+		// Wait for all executing jobs to complete before closing channels
+		e.executingJobs.Wait()
+
 		// Close channels
 		close(e.taskExecChan)
 		close(e.jobExecChan)
@@ -294,7 +300,11 @@ func (e *onDemandExecutor) run() {
 		if delay <= 0 {
 			// Dispatch without holding lock: start a goroutine to execute the job
 			e.log.Trace().Msgf("Dispatching job %s", jobID)
-			go e.executeJob(jobID, tasks, e.errCh, e.taskExecChan)
+			e.executingJobs.Add(1)
+			go func() {
+				defer e.executingJobs.Done()
+				e.executeJob(jobID, tasks, e.errCh, e.taskExecChan)
+			}()
 
 			// Signal that a job has been executed
 			e.jobExecChan <- struct{}{}
