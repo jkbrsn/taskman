@@ -1,6 +1,6 @@
 module github.com/jkbrsn/taskman
 
-go 1.24.3
+go 1.25.1
 
 require (
 	github.com/jkbrsn/threadsafe v0.5.0
