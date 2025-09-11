@@ -15,6 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMain(m *testing.M) {
+	zerolog.TimeFieldFormat = time.RFC3339Nano
+	os.Exit(m.Run())
+}
+
 var (
 	// Activate and deactivate logs during tests using this variable
 	testLogLevel = zerolog.Disabled // Disabled, DebugLevel, InfoLevel etc.
@@ -105,11 +110,6 @@ func TestManager(t *testing.T) {
 		}
 		runManagerTestSuite(t, &managerTestSuite{newManager: newManager})
 	})
-}
-
-func TestMain(m *testing.M) {
-	zerolog.TimeFieldFormat = time.RFC3339Nano
-	m.Run()
 }
 
 func (s *managerTestSuite) TestManagerStop(t *testing.T) {
