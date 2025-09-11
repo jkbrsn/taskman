@@ -17,7 +17,7 @@ import (
 
 func TestMain(m *testing.M) {
 	zerolog.TimeFieldFormat = time.RFC3339Nano
-	os.Exit(m.Run())
+	m.Run()
 }
 
 var (
