@@ -1,4 +1,4 @@
-# taskman [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
+# taskman [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs] [![Go Version](https://img.shields.io/badge/go-1.25.1-blue.svg)](https://golang.org/dl/) [![CI](https://github.com/jkbrsn/taskman/actions/workflows/ci.yml/badge.svg)](https://github.com/jkbrsn/taskman/actions/workflows/ci.yml) [![Latest Release](https://img.shields.io/github/v/release/jkbrsn/taskman)](https://github.com/jkbrsn/taskman/releases)
 
 [godocs]: http://godoc.org/github.com/jkbrsn/taskman
 
@@ -10,9 +10,8 @@ An efficient and scalable task manager for in-process task scheduling in Go appl
 - Grouping of tasks into `Job`s for near-simultaneous execution.
 - Multiple execution modes:
   - **Pool Mode** (default): Utilizes a worker pool setup with dynamic scaling.
-    - Limits the number of spawned goroutines to the number of workers in the pool, keeping memory usage down.
-    - A priority queue dispatches jobs for execution in the worker pool. The queue is a min heap, minimized by shortest time until next execution.
-    - Dynamic worker pool scaling based on queue state (parallel execution, tasks/sec, average execution time).
+    - Keeps memory usage down by limiting the number of goroutines to the number of workers in the pool.
+    - Dynamic worker pool scaling using a control loop with exponentially weighted moving averages (EWMA) for tasks per second and execution times, targeting 70% utilization with a 10% deadband, and cooldown periods to prevent thrashing.
   - **Distributed Mode**: Each job runs as its own long-lived goroutine with configurable parallelism and catch-up behavior.
   - **On-Demand Mode**: Hybrid approach using a priority queue but spawning short-lived goroutines per job execution.
 
@@ -84,7 +83,7 @@ err := manager.ScheduleJob(job)
 
 ### Logging
 
-The package uses `zerolog` for logging purposes. By default, the package will initialize a no-op logger, but if logging from the task manager is desired the `WithLogger` option can be used to set a custom logger at construction.
+The package uses `zerolog` for logging purposes. It defaults to a no-op logger, but an initialized logger can be injected using the `WithLogger` option.
 
 ```go
 // Set a custom logger
@@ -93,6 +92,20 @@ manager := New(
         zerolog.New(os.Stdout).With().Timestamp().Logger(),
     ),
 )
+```
+
+### Metrics
+
+The package provides comprehensive metrics about task manager performance. Metrics can be retrieved at any time using the `Metrics()` method, which returns a `TaskManagerMetrics` struct containing:
+
+- **Jobs**: ManagedJobs (total jobs), JobsPerSecond, JobsTotalExecutions
+- **Tasks**: ManagedTasks (total tasks), TasksPerSecond, TasksAverageExecTime, TasksTotalExecutions
+- **Worker Pool**: PoolMetrics (for Pool Mode, includes worker count, utilization, etc.)
+
+```go
+metrics := manager.Metrics()
+fmt.Printf("Jobs per second: %.2f\n", metrics.JobsPerSecond)
+fmt.Printf("Tasks average exec time: %v\n", metrics.TasksAverageExecTime)
 ```
 
 ## Contributing
