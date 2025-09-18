@@ -35,8 +35,8 @@ const (
 // ExecMode is the execution mode for TaskManager.
 type ExecMode int
 
-// TMOption is a functional option for the TaskManager struct.
-type TMOption func(*TaskManager)
+// Option is a functional option for the TaskManager struct.
+type Option func(*TaskManager)
 
 // TaskManagerMetrics holds metrics about various aspects of the task manager.
 type TaskManagerMetrics struct {
@@ -205,7 +205,7 @@ func setDefaultOptions(tm *TaskManager) {
 
 // New creates, initializes, starts and returns a new TaskManager. It uses default values for
 // the task manager parameters unless changed by the input opts.
-func New(opts ...TMOption) *TaskManager {
+func New(opts ...Option) *TaskManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	tm := &TaskManager{
 		ctx:    ctx,
@@ -275,46 +275,46 @@ func New(opts ...TMOption) *TaskManager {
 }
 
 // WithChannelSize sets the channel buffer size for the TaskManager. The default is 64.
-func WithChannelSize(size int) TMOption {
+func WithChannelSize(size int) Option {
 	return func(tm *TaskManager) { tm.channelBufferSize = size }
 }
 
 // WithLogger sets the logger for the TaskManager. The default is a no-op logger.
-func WithLogger(logger zerolog.Logger) TMOption {
+func WithLogger(logger zerolog.Logger) Option {
 	return func(tm *TaskManager) { tm.log = logger }
 }
 
 // WithMode sets the execution mode for the TaskManager. The default is ModePool.
-func WithMode(mode ExecMode) TMOption {
+func WithMode(mode ExecMode) Option {
 	return func(tm *TaskManager) { tm.execMode = mode }
 }
 
 // WithMPMinWorkerCount (ModePool setting) sets the minimum number of workers for the
 // TaskManager's worker pool. The default is the number of CPU cores found on the system at
 // runtime.
-func WithMPMinWorkerCount(count int) TMOption {
+func WithMPMinWorkerCount(count int) Option {
 	return func(tm *TaskManager) { tm.peMinWorkerCount = count }
 }
 
 // WithMPScaleInterval (ModePool setting) sets the interval at which the worker pool is scaled
 // for the TaskManager. The default is 1 minute.
-func WithMPScaleInterval(interval time.Duration) TMOption {
+func WithMPScaleInterval(interval time.Duration) Option {
 	return func(tm *TaskManager) { tm.peScaleInterval = interval }
 }
 
 // WithMDParallel (ModeDistributed setting) controls whether tasks inside each job execute in
 // parallel (default: true).
-func WithMDParallel(parallel bool) TMOption {
+func WithMDParallel(parallel bool) Option {
 	return func(tm *TaskManager) { tm.deParallel = parallel }
 }
 
 // WithMDMaxParallel (ModeDistributed setting) sets max parallelism per job (0 = unlimited).
-func WithMDMaxParallel(n int) TMOption {
+func WithMDMaxParallel(n int) Option {
 	return func(tm *TaskManager) { tm.deMaxPar = n }
 }
 
 // WithMDCatchUpMax (ModeDistributed setting) sets how many missed cadences may run
 // back-to-back when behind (default: 1).
-func WithMDCatchUpMax(n int) TMOption {
+func WithMDCatchUpMax(n int) Option {
 	return func(tm *TaskManager) { tm.deCatchUpMax = n }
 }

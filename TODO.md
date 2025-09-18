@@ -1,6 +1,6 @@
 # Plans for the go-taskman package
 
-## TODO v0.x.x
+## TODO v0.6.0
 
 - Add more functional options
   - An option to execute a job a select amount of times, e.g. a "one-hit" or "multi-hit" job, either with immediate or delayed execution
@@ -11,7 +11,7 @@
     - could internally involve removing it from the queue, to an separate slice/structure, and then reinserting it when it should be resumed
 - Add Task Execution Timeouts: Implement per-task timeouts to prevent indefinite hangs, using context.WithTimeout in worker goroutines and propagating deadline exceeded errors.
 
-# feature ideas
+## Future ideas
 
 - Task control
   - Make tasks within grouped jobs have ID:s + add an option to remove a task from a job based on its ID
