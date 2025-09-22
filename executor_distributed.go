@@ -112,7 +112,7 @@ func (e *distributedExecutor) Schedule(job Job) error {
 	select {
 	case <-e.ctx.Done():
 		// If the executor is stopped, do not continue adding the job
-		return errors.New("executor context is done")
+		return ErrExecutorContextDone
 	default:
 		// Pass through if the executor is running
 	}

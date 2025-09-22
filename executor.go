@@ -1,5 +1,11 @@
 package taskman
 
+import "errors"
+
+var (
+	ErrExecutorContextDone = errors.New("executor context is done")
+)
+
 // executor is an interface for task executors.
 type executor interface {
 	Start()

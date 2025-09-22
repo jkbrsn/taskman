@@ -21,8 +21,9 @@ type poolExecutor struct {
 
 	// Queue
 	mu         sync.RWMutex
-	jobQueue   priorityQueue // A priority queue to hold the scheduled jobs
-	newJobChan chan bool     // Channel to signal that new tasks have entered the queue
+	jobQueue   priorityQueue        // A priority queue to hold the scheduled jobs
+	newJobChan chan bool            // Channel to signal that new tasks have entered the queue
+	pausedJobs map[string]pausedJob // Jobs currently paused outside the queue
 
 	// Operations
 	runDone  chan struct{} // Channel to signal run has stopped
@@ -44,6 +45,11 @@ type poolExecutor struct {
 	jobExecChan chan struct{}    // Channel to signal that a job has been executed
 	metrics     *executorMetrics // Metrics for the overall task manager
 	maxJobWidth atomic.Int32     // Widest job in the queue in terms of number of tasks
+}
+
+type pausedJob struct {
+	job       *Job
+	remaining time.Duration
 }
 
 // periodicWorkerScaling scales the worker pool at regular intervals, based on the state of the
@@ -214,6 +220,11 @@ func (e *poolExecutor) Job(jobID string) (Job, error) {
 
 	jobIndex, err := e.jobQueue.JobInQueue(jobID)
 	if err != nil {
+		if paused, ok := e.pausedJobs[jobID]; ok {
+			job := *paused.job
+			job.NextExec = time.Now().Add(paused.remaining)
+			return job, nil
+		}
 		return Job{}, fmt.Errorf("job with ID %s not found", jobID)
 	}
 	job := *e.jobQueue[jobIndex]
@@ -250,14 +261,21 @@ func (e *poolExecutor) Remove(jobID string) error {
 	// Get the job from the queue
 	jobIndex, err := e.jobQueue.JobInQueue(jobID)
 	if err != nil {
+		if paused, ok := e.pausedJobs[jobID]; ok {
+			delete(e.pausedJobs, jobID)
+			taskCount := len(paused.job.Tasks)
+			e.metrics.updateMetrics(-1, -taskCount, paused.job.Cadence)
+			e.scaleWorkerPool(0)
+			return nil
+		}
 		return fmt.Errorf("job with ID %s not found", jobID)
 	}
 	job := e.jobQueue[jobIndex]
 
 	// Remove the job from the queue
-	err = e.jobQueue.RemoveByID(jobID)
-	if err != nil {
-		return err
+	removed := heap.Remove(&e.jobQueue, jobIndex)
+	if removed == nil {
+		return fmt.Errorf("job with ID %s not found", jobID)
 	}
 
 	// Update task metrics
@@ -285,6 +303,118 @@ func (e *poolExecutor) Remove(jobID string) error {
 	e.scaleWorkerPool(0)
 
 	return nil
+}
+
+// Pause removes the job from the execution queue while preserving its remaining delay.
+func (e *poolExecutor) Pause(jobID string) error {
+	select {
+	case <-e.ctx.Done():
+		return ErrExecutorContextDone
+	default:
+	}
+
+	e.mu.Lock()
+	if e.pausedJobs == nil {
+		e.mu.Unlock()
+		return errors.New("executor not started")
+	}
+
+	if _, exists := e.pausedJobs[jobID]; exists {
+		e.mu.Unlock()
+		return fmt.Errorf("job %s already paused", jobID)
+	}
+
+	jobIndex, err := e.jobQueue.JobInQueue(jobID)
+	if err != nil {
+		e.mu.Unlock()
+		return fmt.Errorf("pause job %q: %w", jobID, err)
+	}
+	job := e.jobQueue[jobIndex]
+	now := time.Now()
+	remaining := max(job.NextExec.Sub(now), 0)
+
+	removed := heap.Remove(&e.jobQueue, jobIndex)
+	pausedPtr, ok := removed.(*Job)
+	if !ok || pausedPtr == nil {
+		e.mu.Unlock()
+		return fmt.Errorf("pause job %q: failed to remove job from queue", jobID)
+	}
+
+	e.pausedJobs[jobID] = pausedJob{
+		job:       pausedPtr,
+		remaining: remaining,
+	}
+
+	if len(pausedPtr.Tasks) == int(e.maxJobWidth.Load()) {
+		widest := 0
+		for _, j := range e.jobQueue {
+			if l := len(j.Tasks); l > widest {
+				widest = l
+			}
+		}
+		e.maxJobWidth.Store(int32(widest))
+	}
+	e.mu.Unlock()
+
+	e.scaleWorkerPool(0)
+	e.signalNewJob()
+
+	return nil
+}
+
+// Resume requeues a previously paused job using the remaining delay captured when it was paused.
+func (e *poolExecutor) Resume(jobID string) error {
+	select {
+	case <-e.ctx.Done():
+		return ErrExecutorContextDone
+	default:
+	}
+
+	e.mu.Lock()
+	if e.pausedJobs == nil {
+		e.mu.Unlock()
+		return errors.New("executor not started")
+	}
+
+	paused, ok := e.pausedJobs[jobID]
+	if !ok {
+		e.mu.Unlock()
+		return fmt.Errorf("job %s is not paused", jobID)
+	}
+	delete(e.pausedJobs, jobID)
+
+	now := time.Now()
+	if paused.remaining < 0 {
+		paused.remaining = 0
+	}
+	paused.job.NextExec = now.Add(paused.remaining)
+	jobTasks := len(paused.job.Tasks)
+	heap.Push(&e.jobQueue, paused.job)
+
+	if jobTasks > int(e.maxJobWidth.Load()) {
+		e.maxJobWidth.Store(int32(jobTasks))
+	}
+	e.mu.Unlock()
+
+	e.scaleWorkerPool(jobTasks)
+	e.signalNewJob()
+
+	return nil
+}
+
+func (e *poolExecutor) signalNewJob() {
+	if e.newJobChan == nil {
+		return
+	}
+	select {
+	case <-e.ctx.Done():
+		return
+	default:
+	}
+	select {
+	case e.newJobChan <- true:
+	default:
+	}
 }
 
 // Replace replaces a job in the queue.
@@ -353,12 +483,17 @@ func (e *poolExecutor) Schedule(job Job) error {
 	if _, ok := e.jobQueue.JobInQueue(job.ID); ok == nil {
 		return errors.New("invalid job: duplicate job ID")
 	}
+	if e.pausedJobs != nil {
+		if _, exists := e.pausedJobs[job.ID]; exists {
+			return errors.New("invalid job: duplicate job ID")
+		}
+	}
 
 	// Check executor context state
 	select {
 	case <-e.ctx.Done():
 		// If the executor is stopped, do not continue adding the job
-		return errors.New("executor context is done")
+		return ErrExecutorContextDone
 	default:
 		// Pass through if the executor is running
 	}
@@ -390,7 +525,7 @@ func (e *poolExecutor) Schedule(job Job) error {
 	select {
 	case <-e.ctx.Done():
 		// Do nothing if the executor is stopped
-		return errors.New("executor context is done")
+		return ErrExecutorContextDone
 	default:
 		select {
 		case e.newJobChan <- true:
@@ -417,6 +552,7 @@ func (e *poolExecutor) Start() {
 	// Job queue
 	e.jobQueue = make(priorityQueue, 0)
 	heap.Init(&e.jobQueue)
+	e.pausedJobs = make(map[string]pausedJob)
 
 	// Channels (ownership):
 	// - executor owns: taskChan, newJobChan
@@ -486,6 +622,11 @@ func (e *poolExecutor) Stop() {
 
 		// 7) Close jobExecChan
 		close(e.jobExecChan)
+
+		// 8) Clear paused jobs map to release references
+		e.mu.Lock()
+		e.pausedJobs = nil
+		e.mu.Unlock()
 
 		e.log.Debug().Msg("Executor stopped")
 	})
