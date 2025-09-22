@@ -20,9 +20,10 @@ type onDemandExecutor struct {
 	cancel context.CancelFunc
 
 	// Queue
-	mu         sync.RWMutex
-	jobQueue   priorityQueue // A priority queue to hold the scheduled jobs
-	newJobChan chan bool     // Channel to signal that new tasks have entered the queue
+	mu              sync.RWMutex
+	jobQueue        priorityQueue // A priority queue to hold the scheduled jobs
+	queueUpdateChan chan bool     // Channel to signal that new tasks have entered the queue
+	pausedJobs      map[string]pausedJob
 
 	// Operations
 	runDone  chan struct{} // Channel to signal run has stopped
@@ -50,6 +51,11 @@ func (e *onDemandExecutor) Job(jobID string) (Job, error) {
 
 	jobIndex, err := e.jobQueue.JobInQueue(jobID)
 	if err != nil {
+		if paused, ok := e.pausedJobs[jobID]; ok {
+			job := *paused.job
+			job.NextExec = time.Now().Add(paused.remaining)
+			return job, nil
+		}
 		return Job{}, fmt.Errorf("job with ID %s not found", jobID)
 	}
 	job := *e.jobQueue[jobIndex]
@@ -79,6 +85,11 @@ func (e *onDemandExecutor) Remove(jobID string) error {
 	// Get the job from the queue
 	jobIndex, err := e.jobQueue.JobInQueue(jobID)
 	if err != nil {
+		if paused, ok := e.pausedJobs[jobID]; ok {
+			delete(e.pausedJobs, jobID)
+			e.metrics.updateMetrics(-1, -len(paused.job.Tasks), paused.job.Cadence)
+			return nil
+		}
 		return fmt.Errorf("job with ID %s not found", jobID)
 	}
 	job := e.jobQueue[jobIndex]
@@ -91,6 +102,89 @@ func (e *onDemandExecutor) Remove(jobID string) error {
 
 	// Update metrics
 	e.metrics.updateMetrics(-1, -len(job.Tasks), job.Cadence)
+
+	return nil
+}
+
+// Pause removes the job from the execution queue while preserving its remaining delay.
+func (e *onDemandExecutor) Pause(jobID string) error {
+	select {
+	case <-e.ctx.Done():
+		return ErrExecutorContextDone
+	default:
+	}
+
+	e.mu.Lock()
+	if e.pausedJobs == nil {
+		e.mu.Unlock()
+		return errors.New("executor not started")
+	}
+
+	if _, exists := e.pausedJobs[jobID]; exists {
+		e.mu.Unlock()
+		return fmt.Errorf("job %s already paused", jobID)
+	}
+
+	jobIndex, err := e.jobQueue.JobInQueue(jobID)
+	if err != nil {
+		e.mu.Unlock()
+		return fmt.Errorf("pause job %q: %w", jobID, err)
+	}
+	jobPtr := e.jobQueue[jobIndex]
+	now := time.Now()
+	remaining := jobPtr.NextExec.Sub(now)
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	removed := heap.Remove(&e.jobQueue, jobIndex)
+	pausedPtr, ok := removed.(*Job)
+	if !ok || pausedPtr == nil {
+		e.mu.Unlock()
+		return fmt.Errorf("pause job %q: failed to remove job from queue", jobID)
+	}
+
+	e.pausedJobs[jobID] = pausedJob{
+		job:       pausedPtr,
+		remaining: remaining,
+	}
+	e.mu.Unlock()
+
+	e.notifyQueueUpdate()
+
+	return nil
+}
+
+// Resume requeues a previously paused job using the remaining delay captured when it was paused.
+func (e *onDemandExecutor) Resume(jobID string) error {
+	select {
+	case <-e.ctx.Done():
+		return ErrExecutorContextDone
+	default:
+	}
+
+	e.mu.Lock()
+	if e.pausedJobs == nil {
+		e.mu.Unlock()
+		return errors.New("executor not started")
+	}
+
+	paused, ok := e.pausedJobs[jobID]
+	if !ok {
+		e.mu.Unlock()
+		return fmt.Errorf("job %s is not paused", jobID)
+	}
+	delete(e.pausedJobs, jobID)
+
+	now := time.Now()
+	if paused.remaining < 0 {
+		paused.remaining = 0
+	}
+	paused.job.NextExec = now.Add(paused.remaining)
+	heap.Push(&e.jobQueue, paused.job)
+	e.mu.Unlock()
+
+	e.notifyQueueUpdate()
 
 	return nil
 }
@@ -146,12 +240,15 @@ func (e *onDemandExecutor) Schedule(job Job) error {
 	if _, ok := e.jobQueue.JobInQueue(job.ID); ok == nil {
 		return errors.New("invalid job: duplicate job ID")
 	}
+	if _, exists := e.pausedJobs[job.ID]; exists {
+		return errors.New("invalid job: duplicate job ID")
+	}
 
 	// Check executor context state
 	select {
 	case <-e.ctx.Done():
 		// If the executor is stopped, do not continue adding the job
-		return errors.New("executor context is done")
+		return ErrExecutorContextDone
 	default:
 		// Pass through if the executor is running
 	}
@@ -176,14 +273,9 @@ func (e *onDemandExecutor) Schedule(job Job) error {
 	select {
 	case <-e.ctx.Done():
 		// Do nothing if the executor is stopped
-		return errors.New("executor context is done")
+		return ErrExecutorContextDone
 	default:
-		select {
-		case e.newJobChan <- true:
-			e.log.Trace().Msg("Signaled new job added")
-		default:
-			// Do nothing if no one is listening
-		}
+		e.notifyQueueUpdate()
 	}
 
 	return nil
@@ -203,10 +295,11 @@ func (e *onDemandExecutor) Start() {
 	// Job queue
 	e.jobQueue = make(priorityQueue, 0)
 	heap.Init(&e.jobQueue)
+	e.pausedJobs = make(map[string]pausedJob)
 
 	// Channels
 	e.runDone = make(chan struct{})
-	e.newJobChan = make(chan bool, 2)
+	e.queueUpdateChan = make(chan bool, 2)
 
 	go e.metrics.consumeTaskExecChan(e.taskExecChan)
 	go e.metrics.consumeJobExecChan(e.jobExecChan)
@@ -219,8 +312,8 @@ func (e *onDemandExecutor) Stop() {
 		// Signal cancellation
 		e.cancel()
 
-		// Close newJobChan to unblock run loop when queue is empty
-		close(e.newJobChan)
+		// Close queueUpdateChan to unblock run loop when queue is empty
+		close(e.queueUpdateChan)
 
 		// Wait for run loop to exit
 		<-e.runDone
@@ -231,6 +324,10 @@ func (e *onDemandExecutor) Stop() {
 		// Close channels
 		close(e.taskExecChan)
 		close(e.jobExecChan)
+
+		e.mu.Lock()
+		e.pausedJobs = nil
+		e.mu.Unlock()
 
 		// Stop metrics
 		e.metrics.cancel()
@@ -297,7 +394,7 @@ func (e *onDemandExecutor) run() {
 			// No jobs: wait for new job or stop
 			stopTimer()
 			select {
-			case <-e.newJobChan:
+			case <-e.queueUpdateChan:
 				continue
 			case <-e.ctx.Done():
 				return
@@ -363,12 +460,31 @@ func (e *onDemandExecutor) run() {
 		case <-fires:
 			// Time to execute next job
 			continue
-		case <-e.newJobChan:
+		case <-e.queueUpdateChan:
 			// New job added; re-evaluate queue head
 			continue
 		case <-e.ctx.Done():
 			return
 		}
+	}
+}
+
+// notifyQueueUpdate signals the executor that a new job has been added to the queue.
+func (e *onDemandExecutor) notifyQueueUpdate() {
+	if e.queueUpdateChan == nil {
+		return
+	}
+	select {
+	case <-e.ctx.Done():
+		return
+	default:
+	}
+	select {
+	case e.queueUpdateChan <- true:
+		if e.log.GetLevel() <= zerolog.TraceLevel {
+			e.log.Trace().Msg("Signaled new job added")
+		}
+	default:
 	}
 }
 

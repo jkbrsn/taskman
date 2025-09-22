@@ -168,6 +168,74 @@ func TestPoolExecutor_ImmediatePressureOverridesDemand(t *testing.T) {
 	}
 }
 
+func TestPoolExecutor_PauseResume(t *testing.T) {
+	exec := newPoolExecutorForTest(1)
+	defer exec.Stop()
+
+	jobID := "pause-resume"
+	taskExecutionTimes := make(chan time.Time, 1)
+
+	initialDelay := 120 * time.Millisecond
+	job := Job{
+		ID:       jobID,
+		Cadence:  250 * time.Millisecond,
+		NextExec: time.Now().Add(initialDelay),
+		Tasks: []Task{MockTask{ID: "pause-task", executeFunc: func() error {
+			taskExecutionTimes <- time.Now()
+			return nil
+		}}},
+	}
+
+	require.NoError(t, exec.Schedule(job))
+	time.Sleep(10 * time.Millisecond)
+
+	state, err := exec.Job(jobID)
+	require.NoError(t, err)
+	require.True(t,
+		state.NextExec.After(time.Now()),
+		"job NextExec should be scheduled in the future")
+
+	require.NoError(t, exec.Pause(jobID))
+
+	exec.mu.RLock()
+	pausedEntry, ok := exec.pausedJobs[jobID]
+	exec.mu.RUnlock()
+	require.True(t, ok, "job should be present in paused map after pause")
+	remaining := pausedEntry.remaining
+	require.Greater(t, remaining, time.Duration(0), "remaining delay must be positive when paused")
+
+	select {
+	case <-taskExecutionTimes:
+		t.Fatal("task executed while job was paused")
+	case <-time.After(remaining + 75*time.Millisecond):
+	}
+
+	resumeTime := time.Now()
+	require.NoError(t, exec.Resume(jobID))
+
+	var executedAt time.Time
+	select {
+	case executedAt = <-taskExecutionTimes:
+	case <-time.After(remaining + 150*time.Millisecond):
+		t.Fatal("task did not execute after resume")
+	}
+
+	elapsed := executedAt.Sub(resumeTime)
+	const earlyTolerance = 30 * time.Millisecond
+	const lateTolerance = 80 * time.Millisecond
+	assert.GreaterOrEqual(t, elapsed, remaining-earlyTolerance,
+		"job executed sooner than remaining delay after resume (want >= %s, got %s)",
+		remaining-earlyTolerance, elapsed)
+	assert.LessOrEqual(t, elapsed, remaining+lateTolerance,
+		"job executed later than expected delay after resume (want <= %s, got %s)",
+		remaining+lateTolerance, elapsed)
+
+	exec.mu.RLock()
+	_, stillPaused := exec.pausedJobs[jobID]
+	exec.mu.RUnlock()
+	assert.False(t, stillPaused, "job should be removed from paused map after resume")
+}
+
 func TestPoolExecutor_DeadbandSuppressesSmallFluctuations(t *testing.T) {
 	exec := newPoolExecutorForTest(4)
 	defer exec.Stop()

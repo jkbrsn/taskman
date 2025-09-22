@@ -166,6 +166,18 @@ func (tm *TaskManager) RemoveJob(jobID string) error {
 	return tm.exec.Remove(jobID)
 }
 
+// PauseJob temporarily removes a job from scheduling without deleting it, preserving its
+// remaining time until next execution.
+func (tm *TaskManager) PauseJob(jobID string) error {
+	return tm.exec.Pause(jobID)
+}
+
+// ResumeJob re-enqueues a previously paused job, continuing from the remaining delay captured
+// during pause.
+func (tm *TaskManager) ResumeJob(jobID string) error {
+	return tm.exec.Resume(jobID)
+}
+
 // ReplaceJob replaces an existing job (matching ID) with a new one.
 // The previous job's NextExec is preserved to keep the schedule unchanged.
 func (tm *TaskManager) ReplaceJob(newJob Job) error {

@@ -1,5 +1,12 @@
 package taskman
 
+import "errors"
+
+var (
+	// ErrExecutorContextDone is returned when the executor context is done.
+	ErrExecutorContextDone = errors.New("executor context is done")
+)
+
 // executor is an interface for task executors.
 type executor interface {
 	Start()
@@ -8,6 +15,8 @@ type executor interface {
 	Schedule(job Job) error
 	Remove(jobID string) error
 	Replace(job Job) error
+	Pause(jobID string) error
+	Resume(jobID string) error
 
 	Job(jobID string) (Job, error)
 	Metrics() TaskManagerMetrics
