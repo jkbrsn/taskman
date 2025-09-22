@@ -282,35 +282,35 @@ func (s *managerTestSuite) TestTaskExecution(t *testing.T) {
 	manager := s.newManager()
 	defer manager.Stop()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	const pollInterval = 2 * time.Millisecond
+	const cadence = 30 * time.Millisecond
+	executed := make(chan time.Time, 1)
 
-	// Use a channel to receive execution times
-	executionTimes := make(chan time.Time, 1)
-
-	// Create a test task
 	testTask := &MockTask{
 		ID:      "test-execution-task",
-		cadence: 100 * time.Millisecond,
+		cadence: cadence,
 		executeFunc: func() error {
 			testLogger.Debug().Msg("Executing TestTaskExecution task")
-			executionTimes <- time.Now()
-			wg.Done()
+			executed <- time.Now()
 			return nil
 		},
 	}
 
-	_, err := manager.ScheduleTask(testTask, testTask.cadence)
+	_, err := manager.ScheduleTask(testTask, cadence)
 	assert.NoError(t, err)
 
-	select {
-	case execTime := <-executionTimes:
-		elapsed := time.Since(execTime)
-		assert.Greater(t, 150*time.Millisecond, elapsed,
-			"Task executed after %v, expected around 100ms", elapsed)
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("Task did not execute in expected time")
-	}
+	require.Eventually(t, func() bool {
+		return len(executed) > 0
+	}, cadence+40*time.Millisecond, pollInterval, "Task did not execute in expected time")
+
+	execTime := <-executed
+	require.Never(t, func() bool {
+		return len(executed) > 0
+	}, cadence/2, pollInterval, "Expected only a single execution within half a cadence window")
+
+	elapsed := time.Since(execTime)
+	assert.Less(t, elapsed, cadence+20*time.Millisecond,
+		"Task executed after %v, expected around %v", elapsed, cadence)
 }
 
 func (s *managerTestSuite) TestTaskReexecution(t *testing.T) {

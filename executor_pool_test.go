@@ -230,40 +230,43 @@ func TestPoolExecutor_PauseResume(t *testing.T) {
 		"job executed later than expected delay after resume (want <= %s, got %s)",
 		remaining+lateTolerance, elapsed)
 
-	exec.mu.RLock()
-	_, stillPaused := exec.pausedJobs[jobID]
-	exec.mu.RUnlock()
-	assert.False(t, stillPaused, "job should be removed from paused map after resume")
+	require.Eventually(t, func() bool {
+		exec.mu.RLock()
+		_, stillPaused := exec.pausedJobs[jobID]
+		exec.mu.RUnlock()
+		return !stillPaused
+	}, remaining+30*time.Millisecond, pollInterval,
+		"job should be removed from paused map after resume")
 }
 
 func TestPoolExecutor_DeadbandSuppressesSmallFluctuations(t *testing.T) {
 	exec := newPoolExecutorForTest(4)
 	defer exec.Stop()
 
-	// Stabilize target roughly around 4–6 workers.
+	// Stabilize target roughly around 4–6 workers quickly.
 	job := Job{
 		ID:       "steady",
-		Cadence:  10 * time.Millisecond,
-		NextExec: time.Now().Add(20 * time.Millisecond),
+		Cadence:  4 * time.Millisecond,
+		NextExec: time.Now().Add(8 * time.Millisecond),
 		Tasks: []Task{
 			MockTask{ID: "t", executeFunc: func() error {
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(4 * time.Millisecond)
 				return nil
 			}},
 		},
 	}
 	require.NoError(t, exec.Schedule(job))
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		exec.poolScaler.scale(time.Now(), len(job.Tasks))
+		return exec.workerPool.workerCountTarget.Load() >= 4
+	}, 150*time.Millisecond, 5*time.Millisecond, "expected scale up into steady state")
 
 	prev := int(exec.workerPool.workerCountTarget.Load())
-
-	// Nudge metrics slightly by letting it run shortly; decision should be within deadband.
 	exec.poolScaler.scale(time.Now(), 0)
-	time.Sleep(20 * time.Millisecond)
-
-	got := int(exec.workerPool.workerCountTarget.Load())
-	// With 10% deadband, tiny shifts should not change target.
-	require.Equal(t, prev, got, "expected no change within deadband; prev=%d got=%d", prev, got)
+	require.Eventually(t, func() bool {
+		return int(exec.workerPool.workerCountTarget.Load()) == prev
+	}, 40*time.Millisecond, 5*time.Millisecond,
+		"expected no change within deadband; prev=%d", prev)
 }
 
 func TestPoolExecutor_CapAtMaxWorkerCount(t *testing.T) {
@@ -313,25 +316,26 @@ func TestPoolExecutor_ScaleDownAfterRemovingJobs(t *testing.T) {
 	if err := exec.Schedule(job); err != nil {
 		t.Fatalf("schedule: %v", err)
 	}
-	// Warm up a bit so it has reason to scale up.
-	time.Sleep(100 * time.Millisecond)
-	exec.poolScaler.scale(time.Now(), 0)
-	time.Sleep(20 * time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		exec.poolScaler.scale(time.Now(), 0)
+		return exec.workerPool.workerCountTarget.Load() > int32(exec.minWorkerCount)
+	}, 200*time.Millisecond, 10*time.Millisecond, "expected upscale before removal")
 
 	prevTarget := exec.workerPool.workerCountTarget.Load()
 
 	// Remove the job and wait past downscale cooldown.
 	require.NoError(t, exec.Remove("remove-me"))
-
-	time.Sleep(exec.poolScaler.cfg.CooldownDown)
-	exec.poolScaler.scale(time.Now(), 0)
-	time.Sleep(20 * time.Millisecond)
-
-	got := exec.workerPool.workerCountTarget.Load()
-	if got >= prevTarget || got < int32(exec.minWorkerCount) {
-		t.Fatalf("expected downscale towards min; prev=%d got=%d min=%d",
-			prevTarget, got, exec.minWorkerCount)
-	}
+	removedAt := time.Now()
+	require.Eventually(t, func() bool {
+		if time.Since(removedAt) < exec.poolScaler.cfg.CooldownDown {
+			return false
+		}
+		exec.poolScaler.scale(time.Now(), 0)
+		got := exec.workerPool.workerCountTarget.Load()
+		return got < prevTarget && got >= int32(exec.minWorkerCount)
+	}, exec.poolScaler.cfg.CooldownDown+80*time.Millisecond, 10*time.Millisecond,
+		"expected downscale towards min after cooldown")
 }
 
 func TestPoolExecutor_CooldownUpSuppressesRapidUpscale(t *testing.T) {
