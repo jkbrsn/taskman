@@ -5,9 +5,6 @@
 - Add a functional option to execute a job a select amount of times, e.g. a "one-hit" or "multi-hit" job, either with immediate or delayed execution
 - Add a function to instantly execute a job already in the queue, even though it has some time until next execution
   - use heap.Fix to reposition the job in the heap, https://cs.opensource.google/go/go/+/refs/tags/go1.23.4:src/container/heap/heap.go;l=83
-- Add a function to pause/stop a job
-  - point would be to not have to remove a job and reinsert it when it should be resumed
-  - could internally involve removing it from the queue, to an separate slice/structure, and then reinserting it when it should be resumed
 - Add Task Execution Timeouts: Implement per-task timeouts to prevent indefinite hangs, using context.WithTimeout in worker goroutines and propagating deadline exceeded errors.
 
 ## Future ideas

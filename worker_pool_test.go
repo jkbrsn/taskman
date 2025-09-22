@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func getWorkerPool(nWorkers int) *workerPool {
@@ -324,18 +325,15 @@ func TestStopWorker(t *testing.T) {
 		ID: "task-1",
 	}
 	taskChan <- task
-	time.Sleep(5 * time.Millisecond) // Wait for worker to pick up task
-
-	// Verify active/busy workers during task execution
-	assert.Equal(t, int32(1), pool.activeWorkers(), "Expected 1 active worker")
-	assert.Equal(t, 1, len(pool.busyWorkers()), "Expected 1 busy worker")
+	require.Eventually(t, func() bool {
+		return pool.activeWorkers() == 1 && len(pool.busyWorkers()) == 1
+	}, 40*time.Millisecond, 2*time.Millisecond, "Expected worker to start executing task")
 
 	// Stop the remaining worker
 	assert.NoError(t, pool.stopWorker(idleWorkers[1]))
-	time.Sleep(5 * time.Millisecond) // Wait for stop to take effect
-
-	// Confirm worker hasn't stopped during execution
-	assert.Equal(t, int32(1), pool.runningWorkers(), "Expected 1 running workers")
+	require.Eventually(t, func() bool {
+		return pool.runningWorkers() == 1
+	}, 40*time.Millisecond, 2*time.Millisecond, "Expected worker to continue running while busy")
 	activeWorkerAny, ok := pool.workers.Load(idleWorkers[1])
 	assert.True(t, ok, "Expected worker to be found")
 	activeWorkerTyped, ok := activeWorkerAny.(*workerInfo)
@@ -343,8 +341,9 @@ func TestStopWorker(t *testing.T) {
 	assert.True(t, activeWorkerTyped.busy.Load(), "Expected worker to be busy")
 
 	// Verify worker stops after executing task
-	time.Sleep(20 * time.Millisecond) // Wait for worker to execute task
-	assert.Equal(t, int32(0), pool.runningWorkers(), "Expected 0 running workers")
+	require.Eventually(t, func() bool {
+		return pool.runningWorkers() == 0
+	}, 100*time.Millisecond, 2*time.Millisecond, "Expected worker to stop after finishing task")
 
 	// Ensure no errors were reported
 	select {

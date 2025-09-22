@@ -79,7 +79,7 @@ func runManagerTestSuite(t *testing.T, s *managerTestSuite) {
 	t.Run("RemoveJob", s.TestRemoveJob)
 	t.Run("ReplaceJob", s.TestReplaceJob)
 	t.Run("TaskExecution", s.TestTaskExecution)
-	t.Run("TaskRescheduling", s.TestTaskRescheduling)
+	t.Run("TaskReexecution", s.TestTaskReexecution)
 	t.Run("ScheduleTaskDuringExecution", s.TestScheduleTaskDuringExecution)
 	t.Run("ConcurrentScheduleTask", s.TestConcurrentScheduleTask)
 	t.Run("ConcurrentScheduleJob", s.TestConcurrentScheduleJob)
@@ -87,11 +87,14 @@ func runManagerTestSuite(t *testing.T, s *managerTestSuite) {
 	t.Run("ErrorChannelConsumption", s.TestErrorChannelConsumption)
 	t.Run("ManagerMetrics", s.TestManagerMetrics)
 	t.Run("TaskExecutionAt", s.TestTaskExecutionAt)
-	t.Run("GoroutineLeak", s.TestGoroutineLeak)
+
+	// Runs outside the suite to avoid parallelism issues
+	// t.Run("GoroutineLeak", s.TestGoroutineLeak)
 }
 
 func TestManager(t *testing.T) {
 	t.Run("PoolExecutor", func(t *testing.T) {
+		t.Parallel()
 		newManager := func() *TaskManager {
 			return New(
 				WithMode(ModePool),
@@ -103,6 +106,7 @@ func TestManager(t *testing.T) {
 	})
 
 	t.Run("DistributedExecutor", func(t *testing.T) {
+		t.Parallel()
 		newManager := func() *TaskManager {
 			return New(
 				WithMode(ModeDistributed),
@@ -278,38 +282,38 @@ func (s *managerTestSuite) TestTaskExecution(t *testing.T) {
 	manager := s.newManager()
 	defer manager.Stop()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	const pollInterval = 2 * time.Millisecond
+	const cadence = 30 * time.Millisecond
+	executed := make(chan time.Time, 1)
 
-	// Use a channel to receive execution times
-	executionTimes := make(chan time.Time, 1)
-
-	// Create a test task
 	testTask := &MockTask{
 		ID:      "test-execution-task",
-		cadence: 100 * time.Millisecond,
+		cadence: cadence,
 		executeFunc: func() error {
 			testLogger.Debug().Msg("Executing TestTaskExecution task")
-			executionTimes <- time.Now()
-			wg.Done()
+			executed <- time.Now()
 			return nil
 		},
 	}
 
-	_, err := manager.ScheduleTask(testTask, testTask.cadence)
+	_, err := manager.ScheduleTask(testTask, cadence)
 	assert.NoError(t, err)
 
-	select {
-	case execTime := <-executionTimes:
-		elapsed := time.Since(execTime)
-		assert.Greater(t, 150*time.Millisecond, elapsed,
-			"Task executed after %v, expected around 100ms", elapsed)
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("Task did not execute in expected time")
-	}
+	require.Eventually(t, func() bool {
+		return len(executed) > 0
+	}, cadence+40*time.Millisecond, pollInterval, "Task did not execute in expected time")
+
+	execTime := <-executed
+	require.Never(t, func() bool {
+		return len(executed) > 0
+	}, cadence/2, pollInterval, "Expected only a single execution within half a cadence window")
+
+	elapsed := time.Since(execTime)
+	assert.Less(t, elapsed, cadence+20*time.Millisecond,
+		"Task executed after %v, expected around %v", elapsed, cadence)
 }
 
-func (s *managerTestSuite) TestTaskRescheduling(t *testing.T) {
+func (s *managerTestSuite) TestTaskReexecution(t *testing.T) {
 	// Make room in buffered channel for multiple errors (4), since we're not
 	// consuming them in this test and the error channel otherwise blocks the
 	// workers from executing tasks
@@ -322,7 +326,7 @@ func (s *managerTestSuite) TestTaskRescheduling(t *testing.T) {
 	// Create a test task that records execution times
 	mockTask := &MockTask{
 		ID:      "test-rescheduling-task",
-		cadence: 100 * time.Millisecond,
+		cadence: 10 * time.Millisecond,
 		executeFunc: func() error {
 			mu.Lock()
 			executionTimes = append(executionTimes, time.Now())
@@ -334,25 +338,23 @@ func (s *managerTestSuite) TestTaskRescheduling(t *testing.T) {
 	_, err := manager.ScheduleTask(mockTask, mockTask.cadence)
 	assert.NoError(t, err)
 
-	// Wait for the task to execute multiple times
-	// Sleeing for 350ms should allow for about 3 executions
-	time.Sleep(350 * time.Millisecond)
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
 
-	mu.Lock()
-	execCount := len(executionTimes)
-	mu.Unlock()
+		return len(executionTimes) >= 5
+	}, 75*time.Millisecond, 10*time.Millisecond, "Expected at least 5 executions")
 
-	assert.LessOrEqual(t, 3, execCount, "Expected at least 3 executions, got %d", execCount)
+	manager.Stop()
+	time.Sleep(10 * time.Millisecond)
 
 	// Check that the executions occurred at roughly the correct intervals
-	mu.Lock()
 	for i := 1; i < len(executionTimes); i++ {
 		diff := executionTimes[i].Sub(executionTimes[i-1])
-		if diff < 90*time.Millisecond || diff > 110*time.Millisecond {
+		if diff < 9*time.Millisecond || diff > 11*time.Millisecond {
 			t.Fatalf("Execution interval out of expected range: %v", diff)
 		}
 	}
-	mu.Unlock()
 }
 
 func (s *managerTestSuite) TestScheduleTaskDuringExecution(t *testing.T) {
@@ -733,16 +735,11 @@ func (s *managerTestSuite) TestTaskExecutionAt(t *testing.T) {
 	})
 }
 
-func (*managerTestSuite) TestGoroutineLeak(t *testing.T) {
+func (s *managerTestSuite) TestGoroutineLeak(t *testing.T) {
 	// Get initial goroutine count
 	initialGoroutines := runtime.NumGoroutine()
 
-	// Create a manager with periodic scaling
-	manager := New(
-		WithMPMinWorkerCount(1),
-		WithChannelSize(4),
-		WithMPScaleInterval(10*time.Millisecond),
-	)
+	manager := s.newManager()
 	defer manager.Stop()
 
 	// Schedule a job that runs for a while
@@ -780,4 +777,39 @@ func (*managerTestSuite) TestGoroutineLeak(t *testing.T) {
 	assert.InDelta(t, initialGoroutines, finalGoroutines, 5,
 		"Expected goroutine count to return to initial level, got %d (initial: %d)",
 		finalGoroutines, initialGoroutines)
+}
+
+// TestGoroutineLeak runs outside of managerTestSuite to avoid parallelism issues.
+func TestGoroutineLeak(t *testing.T) {
+	t.Run("PoolExecutor", func(t *testing.T) {
+		newManager := func() *TaskManager {
+			return New(
+				WithMode(ModePool),
+				WithMPMinWorkerCount(1),
+				WithChannelSize(4),
+				WithMPScaleInterval(10*time.Millisecond))
+		}
+		testSuite := &managerTestSuite{newManager: newManager}
+		testSuite.TestGoroutineLeak(t)
+	})
+
+	t.Run("DistributedExecutor", func(t *testing.T) {
+		newManager := func() *TaskManager {
+			return New(
+				WithMode(ModeDistributed),
+				WithChannelSize(2))
+		}
+		testSuite := &managerTestSuite{newManager: newManager}
+		testSuite.TestGoroutineLeak(t)
+	})
+
+	t.Run("OnDemandExecutor", func(t *testing.T) {
+		newManager := func() *TaskManager {
+			return New(
+				WithMode(ModeOnDemand),
+				WithChannelSize(2))
+		}
+		testSuite := &managerTestSuite{newManager: newManager}
+		testSuite.TestGoroutineLeak(t)
+	})
 }
