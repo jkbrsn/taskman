@@ -191,7 +191,9 @@ func TestPoolExecutor_PauseResume(t *testing.T) {
 
 	state, err := exec.Job(jobID)
 	require.NoError(t, err)
-	require.True(t, state.NextExec.After(time.Now()), "job NextExec should be scheduled in the future")
+	require.True(t,
+		state.NextExec.After(time.Now()),
+		"job NextExec should be scheduled in the future")
 
 	require.NoError(t, exec.Pause(jobID))
 
@@ -222,9 +224,11 @@ func TestPoolExecutor_PauseResume(t *testing.T) {
 	const earlyTolerance = 30 * time.Millisecond
 	const lateTolerance = 80 * time.Millisecond
 	assert.GreaterOrEqual(t, elapsed, remaining-earlyTolerance,
-		"job executed sooner than remaining delay after resume (want >= %s, got %s)", remaining-earlyTolerance, elapsed)
+		"job executed sooner than remaining delay after resume (want >= %s, got %s)",
+		remaining-earlyTolerance, elapsed)
 	assert.LessOrEqual(t, elapsed, remaining+lateTolerance,
-		"job executed later than expected delay after resume (want <= %s, got %s)", remaining+lateTolerance, elapsed)
+		"job executed later than expected delay after resume (want <= %s, got %s)",
+		remaining+lateTolerance, elapsed)
 
 	exec.mu.RLock()
 	_, stillPaused := exec.pausedJobs[jobID]

@@ -20,6 +20,9 @@ type distributedExecutor struct {
 
 	runners threadsafe.Map[string, *jobRunner] // jobID -> runner
 
+	pausedMu      sync.RWMutex
+	pausedRunners map[string]pausedRunner
+
 	errCh        chan error
 	taskExecChan chan time.Duration
 	jobExecChan  chan struct{}
@@ -31,10 +34,23 @@ type distributedExecutor struct {
 	maxPar     int  // parallelism limit per job (0 = unlimited)
 }
 
+type pausedRunner struct {
+	job       Job
+	remaining time.Duration
+}
+
 // Job returns the job with the given ID.
 func (e *distributedExecutor) Job(jobID string) (Job, error) {
 	runner, ok := e.runners.Get(jobID)
 	if !ok {
+		e.pausedMu.RLock()
+		paused, pausedOK := e.pausedRunners[jobID]
+		e.pausedMu.RUnlock()
+		if pausedOK {
+			job := paused.job
+			job.NextExec = time.Now().Add(paused.remaining)
+			return job, nil
+		}
 		return Job{}, fmt.Errorf("job with ID %s not found", jobID)
 	}
 	runner.mu.RLock()
@@ -62,6 +78,14 @@ func (e *distributedExecutor) Metrics() TaskManagerMetrics {
 func (e *distributedExecutor) Remove(jobID string) error {
 	runner, ok := e.runners.Get(jobID)
 	if !ok {
+		e.pausedMu.Lock()
+		if paused, ok := e.pausedRunners[jobID]; ok {
+			delete(e.pausedRunners, jobID)
+			e.pausedMu.Unlock()
+			e.metrics.updateMetrics(-1, -len(paused.job.Tasks), paused.job.Cadence)
+			return nil
+		}
+		e.pausedMu.Unlock()
 		return fmt.Errorf("job with ID %s not found", jobID)
 	}
 	e.runners.Delete(jobID)
@@ -70,6 +94,80 @@ func (e *distributedExecutor) Remove(jobID string) error {
 	runner.wg.Wait()
 
 	e.metrics.updateMetrics(-1, -len(runner.job.Tasks), runner.job.Cadence)
+	return nil
+}
+
+func (e *distributedExecutor) Pause(jobID string) error {
+	select {
+	case <-e.ctx.Done():
+		return ErrExecutorContextDone
+	default:
+	}
+
+	e.pausedMu.Lock()
+	if _, exists := e.pausedRunners[jobID]; exists {
+		e.pausedMu.Unlock()
+		return fmt.Errorf("job %s already paused", jobID)
+	}
+	e.pausedMu.Unlock()
+
+	runner, ok := e.runners.Get(jobID)
+	if !ok {
+		return fmt.Errorf("pause job %q: job not found", jobID)
+	}
+	e.runners.Delete(jobID)
+
+	runner.mu.RLock()
+	jobCopy := runner.job
+	runner.mu.RUnlock()
+
+	remaining := max(time.Until(jobCopy.NextExec), 0)
+
+	runner.cancel()
+	runner.wg.Wait()
+
+	e.pausedMu.Lock()
+	e.pausedRunners[jobID] = pausedRunner{
+		job:       jobCopy,
+		remaining: remaining,
+	}
+	e.pausedMu.Unlock()
+
+	return nil
+}
+
+func (e *distributedExecutor) Resume(jobID string) error {
+	select {
+	case <-e.ctx.Done():
+		return ErrExecutorContextDone
+	default:
+	}
+
+	e.pausedMu.Lock()
+	paused, ok := e.pausedRunners[jobID]
+	if !ok {
+		e.pausedMu.Unlock()
+		return fmt.Errorf("job %s is not paused", jobID)
+	}
+	delete(e.pausedRunners, jobID)
+	e.pausedMu.Unlock()
+
+	job := paused.job
+	job.NextExec = time.Now().Add(paused.remaining)
+
+	rCtx, rCancel := context.WithCancel(e.ctx)
+	runner := &jobRunner{
+		job:        job,
+		ctx:        rCtx,
+		cancel:     rCancel,
+		parallel:   e.parallel,
+		maxPar:     e.maxPar,
+		catchUpMax: e.catchUpMax,
+	}
+	runner.wg.Add(1)
+	go runner.loop(e.errCh, e.taskExecChan, e.jobExecChan)
+
+	e.runners.Set(job.ID, runner)
 	return nil
 }
 
@@ -120,6 +218,12 @@ func (e *distributedExecutor) Schedule(job Job) error {
 	if _, exists := e.runners.Get(job.ID); exists {
 		return errors.New("duplicate job ID")
 	}
+	e.pausedMu.RLock()
+	if _, exists := e.pausedRunners[job.ID]; exists {
+		e.pausedMu.RUnlock()
+		return errors.New("duplicate job ID")
+	}
+	e.pausedMu.RUnlock()
 
 	e.log.Debug().Msgf(
 		"Scheduling job with %d tasks with ID '%s' and cadence %v",
@@ -175,6 +279,10 @@ func (e *distributedExecutor) Stop() {
 		return true
 	})
 
+	e.pausedMu.Lock()
+	e.pausedRunners = make(map[string]pausedRunner)
+	e.pausedMu.Unlock()
+
 	// Close execution channel
 	close(e.taskExecChan)
 	close(e.jobExecChan)
@@ -223,6 +331,10 @@ func (r *jobRunner) loop(
 	r.mu.RLock()
 	next := r.job.NextExec
 	r.mu.RUnlock()
+
+	r.mu.Lock()
+	r.job.NextExec = next
+	r.mu.Unlock()
 	timer := time.NewTimer(time.Until(next))
 	defer timer.Stop()
 
@@ -259,6 +371,10 @@ func (r *jobRunner) loop(
 
 			// Reset the timer to fire at the upcoming "next" (never negative duration).
 			duration := max(time.Until(next), 0)
+
+			r.mu.Lock()
+			r.job.NextExec = next
+			r.mu.Unlock()
 
 			// Drain the timer channel if needed before resetting to avoid spurious wakeups.
 			if !timer.Stop() {
@@ -374,16 +490,17 @@ func newDistributedExecutor(
 	log := logger.With().Str("component", "executor").Logger()
 
 	return &distributedExecutor{
-		log:          log,
-		ctx:          ctx,
-		cancel:       cancel,
-		runners:      threadsafe.NewRWMutexMap[string](equalRunners),
-		errCh:        errCh,
-		taskExecChan: make(chan time.Duration, channelBufferSize),
-		jobExecChan:  make(chan struct{}, channelBufferSize),
-		metrics:      metrics,
-		catchUpMax:   catchUpMax,
-		parallel:     parallel,
-		maxPar:       maxPar,
+		log:           log,
+		ctx:           ctx,
+		cancel:        cancel,
+		runners:       threadsafe.NewRWMutexMap[string](equalRunners),
+		pausedRunners: make(map[string]pausedRunner),
+		errCh:         errCh,
+		taskExecChan:  make(chan time.Duration, channelBufferSize),
+		jobExecChan:   make(chan struct{}, channelBufferSize),
+		metrics:       metrics,
+		catchUpMax:    catchUpMax,
+		parallel:      parallel,
+		maxPar:        maxPar,
 	}
 }

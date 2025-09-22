@@ -115,6 +115,62 @@ func (s *executorTestSuite) TestExecutorReplace(t *testing.T) {
 	assert.Error(t, err, "Expected replace attempt of non-existent job to produce an error")
 }
 
+func (s *executorTestSuite) TestExecutorPauseResume(t *testing.T) {
+	exec := s.newExec()
+	defer exec.Stop()
+	exec.Start()
+
+	executionTimes := make(chan time.Time, 1)
+	jobID := "pause-resume-interface"
+	cadence := 500 * time.Millisecond
+	initialDelay := 350 * time.Millisecond
+
+	job := Job{
+		Tasks: []Task{simpleTask{func() error {
+			executionTimes <- time.Now()
+			return nil
+		}}},
+		Cadence:  cadence,
+		ID:       jobID,
+		NextExec: time.Now().Add(initialDelay),
+	}
+
+	assert.NoError(t, exec.Schedule(job))
+	assert.NoError(t, exec.Pause(jobID))
+
+	pausedState, err := exec.Job(jobID)
+	assert.NoError(t, err)
+	remaining := max(time.Until(pausedState.NextExec), 0)
+
+	select {
+	case <-executionTimes:
+		t.Fatal("job executed while paused")
+	case <-time.After(remaining + 200*time.Millisecond):
+	}
+
+	resumeStart := time.Now()
+	assert.NoError(t, exec.Resume(jobID))
+
+	var executedAt time.Time
+	select {
+	case executedAt = <-executionTimes:
+	case <-time.After(remaining + 400*time.Millisecond):
+		t.Fatalf("job did not execute after resume (remaining=%s)", remaining)
+	}
+
+	elapsed := executedAt.Sub(resumeStart)
+	toleranceEarly := min(remaining, 75*time.Millisecond)
+	minExpected := max(remaining-toleranceEarly, 0)
+	maxExpected := remaining + 250*time.Millisecond
+
+	assert.GreaterOrEqual(t, int64(elapsed), int64(minExpected),
+		"job executed too early after resume (elapsed=%s, expected>=%s)", elapsed, minExpected)
+	assert.LessOrEqual(t, int64(elapsed), int64(maxExpected),
+		"job executed too late after resume (elapsed=%s, expected<=%s)", elapsed, maxExpected)
+
+	assert.NoError(t, exec.Remove(jobID))
+}
+
 func (s *executorTestSuite) TestExecutorConcurrentSchedule(t *testing.T) {
 	exec := s.newExec()
 	defer exec.Stop()
@@ -284,6 +340,7 @@ func runExecutorTestSuite(t *testing.T, s *executorTestSuite) {
 	t.Run("Schedule", s.TestExecutorSchedule)
 	t.Run("Remove", s.TestExecutorRemove)
 	t.Run("Replace", s.TestExecutorReplace)
+	t.Run("PauseResume", s.TestExecutorPauseResume)
 	t.Run("ConcurrentSchedule", s.TestExecutorConcurrentSchedule)
 	t.Run("ConcurrentExecution", s.TestExecutorConcurrentExecution)
 	t.Run("NextExecVariants", s.TestExecutorNextExecVariants)
