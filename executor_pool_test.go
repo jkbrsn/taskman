@@ -175,10 +175,11 @@ func TestPoolExecutor_PauseResume(t *testing.T) {
 	jobID := "pause-resume"
 	taskExecutionTimes := make(chan time.Time, 1)
 
-	initialDelay := 120 * time.Millisecond
+	const pollInterval = 5 * time.Millisecond
+	initialDelay := 60 * time.Millisecond
 	job := Job{
 		ID:       jobID,
-		Cadence:  250 * time.Millisecond,
+		Cadence:  150 * time.Millisecond,
 		NextExec: time.Now().Add(initialDelay),
 		Tasks: []Task{MockTask{ID: "pause-task", executeFunc: func() error {
 			taskExecutionTimes <- time.Now()
@@ -204,25 +205,24 @@ func TestPoolExecutor_PauseResume(t *testing.T) {
 	remaining := pausedEntry.remaining
 	require.Greater(t, remaining, time.Duration(0), "remaining delay must be positive when paused")
 
-	select {
-	case <-taskExecutionTimes:
-		t.Fatal("task executed while job was paused")
-	case <-time.After(remaining + 75*time.Millisecond):
-	}
+	require.Never(t, func() bool {
+		return len(taskExecutionTimes) > 0
+	}, remaining+20*time.Millisecond, pollInterval,
+		"task executed while job was paused")
 
 	resumeTime := time.Now()
 	require.NoError(t, exec.Resume(jobID))
 
-	var executedAt time.Time
-	select {
-	case executedAt = <-taskExecutionTimes:
-	case <-time.After(remaining + 150*time.Millisecond):
-		t.Fatal("task did not execute after resume")
-	}
+	require.Eventually(t, func() bool {
+		return len(taskExecutionTimes) > 0
+	}, remaining+60*time.Millisecond, pollInterval,
+		"task did not execute after resume")
+
+	executedAt := <-taskExecutionTimes
 
 	elapsed := executedAt.Sub(resumeTime)
-	const earlyTolerance = 30 * time.Millisecond
-	const lateTolerance = 80 * time.Millisecond
+	const earlyTolerance = 15 * time.Millisecond
+	const lateTolerance = 40 * time.Millisecond
 	assert.GreaterOrEqual(t, elapsed, remaining-earlyTolerance,
 		"job executed sooner than remaining delay after resume (want >= %s, got %s)",
 		remaining-earlyTolerance, elapsed)
