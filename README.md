@@ -79,6 +79,14 @@ job := Job{
 
 err := manager.ScheduleJob(job)
 // Handle the error
+
+// Limit a job to execute only three times before self-removing
+_, err = manager.ScheduleTask(
+    SomeStruct{ID: "single-task"},
+    15*time.Second,
+    WithExecLimit(3),
+)
+// Handle the error
 ```
 
 ### Logging

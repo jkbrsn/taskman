@@ -155,23 +155,14 @@ func (e *poolExecutor) run() {
 			// dispatching the tasks, the job has been executed
 			e.jobExecChan <- struct{}{}
 
-			// Reschedule the job under lock; advance by whole cadences until in the future
+			// Reschedule the job under lock or retire it if run limit reached
+			jobRemoved := false
 			e.mu.Lock()
-			if index < len(e.jobQueue) && e.jobQueue[index].ID == jobID {
-				// advance nextExec by N*cadence so that it's after now
-				if cadence > 0 {
-					if !nextExec.After(now) {
-						steps := 1 + int(now.Sub(nextExec)/cadence)
-						nextExec = nextExec.Add(time.Duration(steps) * cadence)
-					}
-				} else {
-					// cadence should be > 0 per validation; fallback to single step
-					nextExec = nextExec.Add(cadence)
-				}
-				e.jobQueue[index].NextExec = nextExec
-				heap.Fix(&e.jobQueue, index)
-			}
+			jobRemoved = e.rescheduleOrRemoveAtLocked(index, jobID, nextExec, cadence, now)
 			e.mu.Unlock()
+			if jobRemoved {
+				e.scaleWorkerPool(0)
+			}
 			continue
 		}
 
@@ -211,6 +202,42 @@ func (e *poolExecutor) run() {
 func (e *poolExecutor) scaleWorkerPool(workersNeededNow int) {
 	now := time.Now()
 	e.poolScaler.scale(now, workersNeededNow)
+}
+
+// rescheduleOrRemoveAtLocked handles rescheduling a job entry at the given index or removing
+// it if its run limit has been reached. It assumes `e.mu` is already held.
+func (e *poolExecutor) rescheduleOrRemoveAtLocked(
+	index int,
+	jobID string,
+	nextExec time.Time,
+	cadence time.Duration,
+	now time.Time,
+) bool {
+	if index < len(e.jobQueue) && e.jobQueue[index].ID == jobID {
+		entry := e.jobQueue[index]
+		if entry.consumeRun() {
+			removed := heap.Remove(&e.jobQueue, index)
+			if removedJob, ok := removed.(*Job); ok {
+				e.finalizeJobRemovalLocked(removedJob)
+			}
+			return true
+		}
+
+		// advance nextExec by whole cadences so that it's after now
+		n := nextExec
+		if cadence > 0 {
+			if !n.After(now) {
+				steps := 1 + int(now.Sub(n)/cadence)
+				n = n.Add(time.Duration(steps) * cadence)
+			}
+		} else {
+			// cadence should be > 0 per validation; fallback to single step
+			n = n.Add(cadence)
+		}
+		e.jobQueue[index].NextExec = n
+		heap.Fix(&e.jobQueue, index)
+	}
+	return false
 }
 
 // Job returns the job with the given ID.
@@ -270,34 +297,14 @@ func (e *poolExecutor) Remove(jobID string) error {
 		}
 		return fmt.Errorf("job with ID %s not found", jobID)
 	}
-	job := e.jobQueue[jobIndex]
-
 	// Remove the job from the queue
 	removed := heap.Remove(&e.jobQueue, jobIndex)
 	if removed == nil {
 		return fmt.Errorf("job with ID %s not found", jobID)
 	}
-
-	// Update task metrics
-	newWidestJob := 0
-	taskCount := len(job.Tasks)
-	if taskCount == int(e.maxJobWidth.Load()) {
-		// If the removed job is widest, find the second widest job in the queue
-		for _, j := range e.jobQueue {
-			// If another job has the same number of tasks, keep the widest job at the same value
-			if len(j.Tasks) == taskCount && j.ID != jobID {
-				newWidestJob = taskCount
-				break
-			}
-			// Otherwise, find the second widest job
-			if len(j.Tasks) > newWidestJob && len(j.Tasks) < taskCount {
-				newWidestJob = len(j.Tasks)
-			}
-		}
-		e.maxJobWidth.Store(int32(newWidestJob))
+	if removedJob, ok := removed.(*Job); ok {
+		e.finalizeJobRemovalLocked(removedJob)
 	}
-	// Update the task metrics with a negative task count to signify removal
-	e.metrics.updateMetrics(-1, -taskCount, job.Cadence)
 
 	// Scale worker pool if needed
 	e.scaleWorkerPool(0)
@@ -418,6 +425,24 @@ func (e *poolExecutor) notifyQueueUpdate() {
 	}
 }
 
+// finalizeJobRemovalLocked finalizes the removal of a job from the queue. Assumes the executor lock
+// is already held when called.
+func (e *poolExecutor) finalizeJobRemovalLocked(job *Job) {
+	if job == nil {
+		return
+	}
+	if len(job.Tasks) == int(e.maxJobWidth.Load()) {
+		widest := 0
+		for _, candidate := range e.jobQueue {
+			if l := len(candidate.Tasks); l > widest {
+				widest = l
+			}
+		}
+		e.maxJobWidth.Store(int32(widest))
+	}
+	e.metrics.updateMetrics(-1, -len(job.Tasks), job.Cadence)
+}
+
 // Replace replaces a job in the queue.
 func (e *poolExecutor) Replace(job Job) error {
 	if err := job.Validate(); err != nil {
@@ -437,6 +462,7 @@ func (e *poolExecutor) Replace(job Job) error {
 	oldJob := e.jobQueue[jobIndex]
 	job.NextExec = oldJob.NextExec
 	job.index = oldJob.index
+	job.inheritExecLimit(oldJob)
 	e.jobQueue[jobIndex] = &job
 
 	// Preserve heap invariants if ordering-related fields ever change
@@ -476,6 +502,8 @@ func (e *poolExecutor) Schedule(job Job) error {
 	if err := job.Validate(); err != nil {
 		return fmt.Errorf("invalid job: %w", err)
 	}
+
+	job.initializeExecLimit()
 
 	e.mu.Lock()
 	defer e.mu.Unlock()

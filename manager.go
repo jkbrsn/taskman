@@ -108,31 +108,32 @@ func (tm *TaskManager) Metrics() TaskManagerMetrics {
 
 // ScheduleFunc takes a function and adds it to the TaskManager in a Job. Creates and returns a
 // randomized ID, used to identify the Job within the task manager.
-func (tm *TaskManager) ScheduleFunc(function func() error, cadence time.Duration) (string, error) {
+func (tm *TaskManager) ScheduleFunc(
+	function func() error,
+	cadence time.Duration,
+	jobOpts ...JobOption,
+) (string, error) {
 	task := simpleTask{function}
-	jobID := xid.New().String()
-
-	job := Job{
-		Tasks:    []Task{task},
-		Cadence:  cadence,
-		ID:       jobID,
-		NextExec: time.Now().Add(cadence),
-	}
-
-	return jobID, tm.ScheduleJob(job)
+	return tm.ScheduleTask(task, cadence, jobOpts...)
 }
 
 // ScheduleJob adds a job to the TaskManager.
 // The job's tasks will execute in parallel at the specified cadence.
 // Requirements: cadence > 0, at least one task, NextExec not older than one cadence,
 // and a unique ID within the TaskManager.
-func (tm *TaskManager) ScheduleJob(job Job) error {
+func (tm *TaskManager) ScheduleJob(job Job, jobOpts ...JobOption) error {
+	applyJobOptions(&job, jobOpts...)
+	job.initializeExecLimit()
 	return tm.exec.Schedule(job)
 }
 
 // ScheduleTask schedules a task in a newly created Job. A randomized ID is added to the Job and
 // returned.
-func (tm *TaskManager) ScheduleTask(task Task, cadence time.Duration) (string, error) {
+func (tm *TaskManager) ScheduleTask(
+	task Task,
+	cadence time.Duration,
+	jobOpts ...JobOption,
+) (string, error) {
 	jobID := xid.New().String()
 
 	job := Job{
@@ -142,12 +143,16 @@ func (tm *TaskManager) ScheduleTask(task Task, cadence time.Duration) (string, e
 		NextExec: time.Now().Add(cadence),
 	}
 
-	return jobID, tm.ScheduleJob(job)
+	return jobID, tm.ScheduleJob(job, jobOpts...)
 }
 
 // ScheduleTasks schedules a slice of tasks in a newly created Job. A randomized ID is added to the
 // Job and returned.
-func (tm *TaskManager) ScheduleTasks(tasks []Task, cadence time.Duration) (string, error) {
+func (tm *TaskManager) ScheduleTasks(
+	tasks []Task,
+	cadence time.Duration,
+	jobOpts ...JobOption,
+) (string, error) {
 	jobID := xid.New().String()
 
 	// Takes a copy of the tasks, avoiding unintended consequences if the slice is modified
@@ -158,7 +163,7 @@ func (tm *TaskManager) ScheduleTasks(tasks []Task, cadence time.Duration) (strin
 		NextExec: time.Now().Add(cadence),
 	}
 
-	return jobID, tm.ScheduleJob(job)
+	return jobID, tm.ScheduleJob(job, jobOpts...)
 }
 
 // RemoveJob removes a job with the given ID from the TaskManager.

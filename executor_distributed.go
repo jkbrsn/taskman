@@ -34,6 +34,7 @@ type distributedExecutor struct {
 	maxPar     int  // parallelism limit per job (0 = unlimited)
 }
 
+// pausedRunner represents a paused job runner.
 type pausedRunner struct {
 	job       Job
 	remaining time.Duration
@@ -97,6 +98,7 @@ func (e *distributedExecutor) Remove(jobID string) error {
 	return nil
 }
 
+// Pause pauses a job.
 func (e *distributedExecutor) Pause(jobID string) error {
 	select {
 	case <-e.ctx.Done():
@@ -136,6 +138,7 @@ func (e *distributedExecutor) Pause(jobID string) error {
 	return nil
 }
 
+// Resume resumes a paused job.
 func (e *distributedExecutor) Resume(jobID string) error {
 	select {
 	case <-e.ctx.Done():
@@ -154,6 +157,7 @@ func (e *distributedExecutor) Resume(jobID string) error {
 
 	job := paused.job
 	job.NextExec = time.Now().Add(paused.remaining)
+	job.initializeExecLimit()
 
 	rCtx, rCancel := context.WithCancel(e.ctx)
 	runner := &jobRunner{
@@ -163,11 +167,16 @@ func (e *distributedExecutor) Resume(jobID string) error {
 		parallel:   e.parallel,
 		maxPar:     e.maxPar,
 		catchUpMax: e.catchUpMax,
+		exec:       e,
 	}
+
+	// Register the runner before starting its goroutine to avoid a race where the
+	// runner completes immediately and attempts to remove itself before it is
+	// present in the runners map.
+	e.runners.Set(job.ID, runner)
 	runner.wg.Add(1)
 	go runner.loop(e.errCh, e.taskExecChan, e.jobExecChan)
 
-	e.runners.Set(job.ID, runner)
 	return nil
 }
 
@@ -186,6 +195,7 @@ func (e *distributedExecutor) Replace(job Job) error {
 	runner.mu.Lock()
 	prev := runner.job
 	job.NextExec = prev.NextExec
+	job.inheritExecLimit(&prev)
 	runner.job = job
 	runner.mu.Unlock()
 
@@ -205,6 +215,8 @@ func (e *distributedExecutor) Schedule(job Job) error {
 	if err := job.Validate(); err != nil {
 		return fmt.Errorf("invalid job: %w", err)
 	}
+
+	job.initializeExecLimit()
 
 	// Check executor context state
 	select {
@@ -243,11 +255,16 @@ func (e *distributedExecutor) Schedule(job Job) error {
 		parallel:   e.parallel,
 		maxPar:     e.maxPar,
 		catchUpMax: e.catchUpMax,
+		exec:       e,
 	}
+
+	// Register the runner before starting its goroutine to avoid a race where the
+	// runner completes immediately and attempts to remove itself before it is
+	// present in the runners map.
+	e.runners.Set(job.ID, runner)
 	runner.wg.Add(1)
 	go runner.loop(e.errCh, e.taskExecChan, e.jobExecChan)
 
-	e.runners.Set(job.ID, runner)
 	e.metrics.updateMetrics(1, len(job.Tasks), job.Cadence)
 
 	return nil
@@ -291,6 +308,18 @@ func (e *distributedExecutor) Stop() {
 	e.metrics.cancel()
 }
 
+// completeRunner removes a job runner from the executor and updates metrics.
+func (e *distributedExecutor) completeRunner(r *jobRunner) {
+	if r == nil {
+		return
+	}
+	job := r.snapshotJob()
+	r.cancel()
+	if _, ok := e.runners.LoadAndDelete(job.ID); ok {
+		e.metrics.updateMetrics(-1, -len(job.Tasks), job.Cadence)
+	}
+}
+
 // jobRunner is an implementation of job runner that runs tasks in a separate goroutine.
 type jobRunner struct {
 	mu sync.RWMutex
@@ -299,12 +328,14 @@ type jobRunner struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	exec   *distributedExecutor
 
 	parallel   bool // run tasks in parallel within a job
 	maxPar     int  // 0 = unlimited
 	catchUpMax int  // max immediate catch-ups per tick when behind
 }
 
+// execute runs the job runner.
 func (r *jobRunner) execute(errCh chan<- error, taskExecChan chan<- time.Duration) {
 	if r.parallel {
 		r.runParallel(errCh, taskExecChan)
@@ -313,6 +344,13 @@ func (r *jobRunner) execute(errCh chan<- error, taskExecChan chan<- time.Duratio
 	r.runSequential(errCh, taskExecChan)
 }
 
+// loop runs the job runner.
+//
+// It uses a one-shot timer that always points at the job's next scheduled execution time
+// (stored in the local "next" variable). After each run, "next" is advanced by the
+// cadence. If the runner fell behind schedule (e.g., the previous run took longer than
+// one cadence), we allow it to "catch up" by at most catchUpMax skipped periods to avoid
+// a long backlog of immediate executions.
 // loop runs the job runner.
 //
 // It uses a one-shot timer that always points at the job's next scheduled execution time
@@ -349,32 +387,13 @@ func (r *jobRunner) loop(
 		case <-r.ctx.Done():
 			return
 		case <-timer.C:
-			// Execute tasks for this job tick.
-			r.execute(errCh, taskExecChan)
-
-			// Meter one job execution
-			jobExecChan <- struct{}{}
-
-			// Advance "next" forward by whole cadences until it lands in the future,
-			// but cap the number of immediate catch-ups to catchUpMax.
-			skips := 0
-			r.mu.RLock()
-			cadence := r.job.Cadence
-			r.mu.RUnlock()
-			for {
-				next = next.Add(cadence)
-				if skips >= catchUpMax || next.After(time.Now()) {
-					break
-				}
-				skips++
+			// Handle the tick in a helper to keep cognitive complexity low.
+			if r.handleTimerTick(errCh, taskExecChan, jobExecChan, &next, catchUpMax) {
+				return
 			}
 
 			// Reset the timer to fire at the upcoming "next" (never negative duration).
 			duration := max(time.Until(next), 0)
-
-			r.mu.Lock()
-			r.job.NextExec = next
-			r.mu.Unlock()
 
 			// Drain the timer channel if needed before resetting to avoid spurious wakeups.
 			if !timer.Stop() {
@@ -386,6 +405,53 @@ func (r *jobRunner) loop(
 			timer.Reset(duration)
 		}
 	}
+}
+
+// handleTimerTick performs the work that used to be in the timer.C case of loop.
+// It returns true when the runner should stop (job exhausted or context canceled).
+func (r *jobRunner) handleTimerTick(
+	errCh chan<- error,
+	taskExecChan chan<- time.Duration,
+	jobExecChan chan<- struct{},
+	next *time.Time,
+	catchUpMax int,
+) bool {
+	// Execute tasks for this job tick.
+	r.execute(errCh, taskExecChan)
+
+	// Meter one job execution
+	jobExecChan <- struct{}{}
+
+	// Consume one run and check if the job is done.
+	r.mu.Lock()
+	cadence := r.job.Cadence
+	jobDone := r.job.consumeRun()
+	r.mu.Unlock()
+	if jobDone {
+		if r.exec != nil {
+			r.exec.completeRunner(r)
+		}
+		return true
+	}
+
+	// Advance "next" forward by whole cadences until it lands in the future,
+	// but cap the number of immediate catch-ups to catchUpMax.
+	skips := 0
+	now := time.Now()
+	for {
+		*next = (*next).Add(cadence)
+		if skips >= catchUpMax || (*next).After(now) {
+			break
+		}
+		skips++
+	}
+
+	// Persist next to the job under lock.
+	r.mu.Lock()
+	r.job.NextExec = *next
+	r.mu.Unlock()
+
+	return false
 }
 
 // runSequential runs the job sequentially.
@@ -432,6 +498,12 @@ func (r *jobRunner) runParallel(errCh chan<- error, taskExecChan chan<- time.Dur
 	}
 
 	wg.Wait()
+}
+
+func (r *jobRunner) snapshotJob() Job {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.job
 }
 
 // equalRunners returns true if the two runners have the same job ID.

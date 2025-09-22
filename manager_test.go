@@ -357,6 +357,79 @@ func (s *managerTestSuite) TestTaskReexecution(t *testing.T) {
 	}
 }
 
+func TestJobMaxExecs(t *testing.T) {
+	testCases := []struct {
+		name string
+		opts []Option
+	}{
+		{
+			name: "Pool",
+			opts: []Option{
+				WithMode(ModePool),
+				WithMPMinWorkerCount(1),
+				WithChannelSize(4),
+			},
+		},
+		{
+			name: "Distributed",
+			opts: []Option{
+				WithMode(ModeDistributed),
+				WithChannelSize(4),
+			},
+		},
+		{
+			name: "OnDemand",
+			opts: []Option{
+				WithMode(ModeOnDemand),
+				WithChannelSize(4),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := New(tc.opts...)
+			t.Cleanup(manager.Stop)
+
+			execCh := make(chan struct{}, 10)
+			task := &MockTask{
+				ID:      "limited",
+				cadence: 10 * time.Millisecond,
+				executeFunc: func() error {
+					execCh <- struct{}{}
+					return nil
+				},
+			}
+
+			jobID, err := manager.ScheduleTask(task, task.cadence, WithExecLimit(3))
+			require.NoError(t, err)
+
+			for i := range 3 {
+				select {
+				case <-execCh:
+				case <-time.After(250 * time.Millisecond):
+					t.Fatalf("expected execution %d within timeout", i+1)
+				}
+			}
+
+			select {
+			case <-execCh:
+				t.Fatal("job executed more times than configured")
+			case <-time.After(30 * time.Millisecond):
+			}
+
+			require.Eventually(t, func() bool {
+				_, err := manager.exec.Job(jobID)
+				return err != nil
+			}, 250*time.Millisecond, 10*time.Millisecond, "expected job %s to remove itself", jobID)
+
+			require.Eventually(t, func() bool {
+				return manager.Metrics().ManagedJobs == 0
+			}, 250*time.Millisecond, 10*time.Millisecond, "expected metrics to reflect job removal")
+		})
+	}
+}
+
 func (s *managerTestSuite) TestScheduleTaskDuringExecution(t *testing.T) {
 	manager := s.newManager()
 	defer manager.Stop()

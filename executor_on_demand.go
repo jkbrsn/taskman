@@ -87,7 +87,7 @@ func (e *onDemandExecutor) Remove(jobID string) error {
 	if err != nil {
 		if paused, ok := e.pausedJobs[jobID]; ok {
 			delete(e.pausedJobs, jobID)
-			e.metrics.updateMetrics(-1, -len(paused.job.Tasks), paused.job.Cadence)
+			e.finalizeJobRemovalLocked(paused.job)
 			return nil
 		}
 		return fmt.Errorf("job with ID %s not found", jobID)
@@ -100,8 +100,7 @@ func (e *onDemandExecutor) Remove(jobID string) error {
 		return err
 	}
 
-	// Update metrics
-	e.metrics.updateMetrics(-1, -len(job.Tasks), job.Cadence)
+	e.finalizeJobRemovalLocked(job)
 
 	return nil
 }
@@ -208,6 +207,7 @@ func (e *onDemandExecutor) Replace(job Job) error {
 	oldJob := e.jobQueue[jobIndex]
 	job.NextExec = oldJob.NextExec
 	job.index = oldJob.index
+	job.inheritExecLimit(oldJob)
 	e.jobQueue[jobIndex] = &job
 
 	// Preserve heap invariants if ordering-related fields ever change
@@ -232,6 +232,8 @@ func (e *onDemandExecutor) Schedule(job Job) error {
 	if err := job.Validate(); err != nil {
 		return fmt.Errorf("invalid job: %w", err)
 	}
+
+	job.initializeExecLimit()
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -415,28 +417,9 @@ func (e *onDemandExecutor) run() {
 				e.jobExecChan <- struct{}{}
 			}()
 
-			// Reschedule the job under lock, with catch-up
+			// Reschedule the job under lock, with catch-up, or retire if run limit reached
 			e.mu.Lock()
-			if jobPtr != nil &&
-				jobPtr.index < len(e.jobQueue) &&
-				e.jobQueue[jobPtr.index].ID == jobID {
-				// Advance "next" forward by whole cadences until it lands in the future,
-				// but cap the number of immediate catch-ups to catchUpMax.
-				skips := 0
-				catchUpMax := e.catchUpMax
-				if catchUpMax <= 0 {
-					catchUpMax = 1
-				}
-				for skips < catchUpMax {
-					nextExec = nextExec.Add(cadence)
-					if nextExec.After(now) {
-						break
-					}
-					skips++
-				}
-				e.jobQueue[jobPtr.index].NextExec = nextExec
-				heap.Fix(&e.jobQueue, jobPtr.index)
-			}
+			e.rescheduleOrRemoveAtLocked(jobPtr, nextExec, cadence, now)
 			e.mu.Unlock()
 			continue
 		}
@@ -486,6 +469,53 @@ func (e *onDemandExecutor) notifyQueueUpdate() {
 		}
 	default:
 	}
+}
+
+// rescheduleOrRemoveAtLocked handles rescheduling or removing a job entry for the
+// on-demand executor. It assumes `e.mu` is already held.
+func (e *onDemandExecutor) rescheduleOrRemoveAtLocked(
+	jobPtr *Job,
+	nextExec time.Time,
+	cadence time.Duration,
+	now time.Time,
+) {
+	if jobPtr.index < len(e.jobQueue) && e.jobQueue[jobPtr.index].ID == jobPtr.ID {
+		entry := e.jobQueue[jobPtr.index]
+		if entry.consumeRun() {
+			removed := heap.Remove(&e.jobQueue, jobPtr.index)
+			if removedJob, ok := removed.(*Job); ok {
+				e.finalizeJobRemovalLocked(removedJob)
+			}
+			return
+		}
+
+		// Advance "next" forward by whole cadences until it lands in the future,
+		// but cap the number of immediate catch-ups to catchUpMax.
+		n := nextExec
+		skips := 0
+		catchUpMax := e.catchUpMax
+		if catchUpMax <= 0 {
+			catchUpMax = 1
+		}
+		for skips < catchUpMax {
+			n = n.Add(cadence)
+			if n.After(now) {
+				break
+			}
+			skips++
+		}
+		e.jobQueue[jobPtr.index].NextExec = n
+		heap.Fix(&e.jobQueue, jobPtr.index)
+	}
+}
+
+// finalizeJobRemovalLocked finalizes the removal of a job from the queue. Assumes the executor lock
+// is already held when called.
+func (e *onDemandExecutor) finalizeJobRemovalLocked(job *Job) {
+	if job == nil {
+		return
+	}
+	e.metrics.updateMetrics(-1, -len(job.Tasks), job.Cadence)
 }
 
 // revive:enable:cyclomatic
