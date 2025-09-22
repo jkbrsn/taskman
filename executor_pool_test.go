@@ -107,11 +107,11 @@ func TestPoolExecutor_ScaleUpToDemand(t *testing.T) {
 	// Needed ≈ ceil(λ*E[S]/0.7) ≈ ceil(4/0.7) ≈ 6
 	job := Job{
 		ID:       "burst-demand",
-		Cadence:  2 * time.Millisecond,
+		Cadence:  1 * time.Millisecond,
 		NextExec: time.Now().Add(5 * time.Millisecond),
 		Tasks: []Task{
 			MockTask{ID: "t", executeFunc: func() error {
-				time.Sleep(30 * time.Millisecond)
+				time.Sleep(15 * time.Millisecond)
 				return nil
 			}},
 		},
@@ -119,12 +119,12 @@ func TestPoolExecutor_ScaleUpToDemand(t *testing.T) {
 	require.NoError(t, exec.Schedule(job))
 
 	// Let a couple of executions happen so metrics (TPS, avg exec) move.
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(75 * time.Millisecond)
 
 	prev := exec.workerPool.workerCountTarget.Load()
 	// Force a scale tick using current instantaneous metrics.
 	exec.poolScaler.scale(time.Now(), 0)
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
 	got := exec.workerPool.workerCountTarget.Load()
 	require.Greater(t, got, prev,
