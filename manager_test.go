@@ -87,11 +87,14 @@ func runManagerTestSuite(t *testing.T, s *managerTestSuite) {
 	t.Run("ErrorChannelConsumption", s.TestErrorChannelConsumption)
 	t.Run("ManagerMetrics", s.TestManagerMetrics)
 	t.Run("TaskExecutionAt", s.TestTaskExecutionAt)
-	t.Run("GoroutineLeak", s.TestGoroutineLeak)
+
+	// Runs outside the suite to avoid parallelism issues
+	// t.Run("GoroutineLeak", s.TestGoroutineLeak)
 }
 
 func TestManager(t *testing.T) {
 	t.Run("PoolExecutor", func(t *testing.T) {
+		t.Parallel()
 		newManager := func() *TaskManager {
 			return New(
 				WithMode(ModePool),
@@ -103,6 +106,7 @@ func TestManager(t *testing.T) {
 	})
 
 	t.Run("DistributedExecutor", func(t *testing.T) {
+		t.Parallel()
 		newManager := func() *TaskManager {
 			return New(
 				WithMode(ModeDistributed),
@@ -731,16 +735,11 @@ func (s *managerTestSuite) TestTaskExecutionAt(t *testing.T) {
 	})
 }
 
-func (*managerTestSuite) TestGoroutineLeak(t *testing.T) {
+func (s *managerTestSuite) TestGoroutineLeak(t *testing.T) {
 	// Get initial goroutine count
 	initialGoroutines := runtime.NumGoroutine()
 
-	// Create a manager with periodic scaling
-	manager := New(
-		WithMPMinWorkerCount(1),
-		WithChannelSize(4),
-		WithMPScaleInterval(10*time.Millisecond),
-	)
+	manager := s.newManager()
 	defer manager.Stop()
 
 	// Schedule a job that runs for a while
@@ -778,4 +777,39 @@ func (*managerTestSuite) TestGoroutineLeak(t *testing.T) {
 	assert.InDelta(t, initialGoroutines, finalGoroutines, 5,
 		"Expected goroutine count to return to initial level, got %d (initial: %d)",
 		finalGoroutines, initialGoroutines)
+}
+
+// TestGoroutineLeak runs outside of managerTestSuite to avoid parallelism issues.
+func TestGoroutineLeak(t *testing.T) {
+	t.Run("PoolExecutor", func(t *testing.T) {
+		newManager := func() *TaskManager {
+			return New(
+				WithMode(ModePool),
+				WithMPMinWorkerCount(1),
+				WithChannelSize(4),
+				WithMPScaleInterval(10*time.Millisecond))
+		}
+		testSuite := &managerTestSuite{newManager: newManager}
+		testSuite.TestGoroutineLeak(t)
+	})
+
+	t.Run("DistributedExecutor", func(t *testing.T) {
+		newManager := func() *TaskManager {
+			return New(
+				WithMode(ModeDistributed),
+				WithChannelSize(2))
+		}
+		testSuite := &managerTestSuite{newManager: newManager}
+		testSuite.TestGoroutineLeak(t)
+	})
+
+	t.Run("OnDemandExecutor", func(t *testing.T) {
+		newManager := func() *TaskManager {
+			return New(
+				WithMode(ModeOnDemand),
+				WithChannelSize(2))
+		}
+		testSuite := &managerTestSuite{newManager: newManager}
+		testSuite.TestGoroutineLeak(t)
+	})
 }
