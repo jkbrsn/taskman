@@ -20,10 +20,10 @@ type poolExecutor struct {
 	cancel context.CancelFunc
 
 	// Queue
-	mu         sync.RWMutex
-	jobQueue   priorityQueue        // A priority queue to hold the scheduled jobs
-	newJobChan chan bool            // Channel to signal that new tasks have entered the queue
-	pausedJobs map[string]pausedJob // Jobs currently paused outside the queue
+	mu              sync.RWMutex
+	jobQueue        priorityQueue        // A priority queue to hold the scheduled jobs
+	queueUpdateChan chan bool            // Channel to signal that new tasks have entered the queue
+	pausedJobs      map[string]pausedJob // Jobs currently paused outside the queue
 
 	// Operations
 	runDone  chan struct{} // Channel to signal run has stopped
@@ -130,7 +130,7 @@ func (e *poolExecutor) run() {
 			// No jobs: wait for new job or stop
 			stopTimer()
 			select {
-			case <-e.newJobChan:
+			case <-e.queueUpdateChan:
 				continue
 			case <-e.ctx.Done():
 				return
@@ -194,7 +194,7 @@ func (e *poolExecutor) run() {
 		case <-fires:
 			// Time to execute next job
 			continue
-		case <-e.newJobChan:
+		case <-e.queueUpdateChan:
 			// New job added; re-evaluate queue head
 			continue
 		case <-e.ctx.Done():
@@ -357,7 +357,7 @@ func (e *poolExecutor) Pause(jobID string) error {
 	e.mu.Unlock()
 
 	e.scaleWorkerPool(0)
-	e.signalNewJob()
+	e.notifyQueueUpdate()
 
 	return nil
 }
@@ -397,13 +397,14 @@ func (e *poolExecutor) Resume(jobID string) error {
 	e.mu.Unlock()
 
 	e.scaleWorkerPool(jobTasks)
-	e.signalNewJob()
+	e.notifyQueueUpdate()
 
 	return nil
 }
 
-func (e *poolExecutor) signalNewJob() {
-	if e.newJobChan == nil {
+// notifyQueueUpdate signals the executor that a new job has been added to the queue.
+func (e *poolExecutor) notifyQueueUpdate() {
+	if e.queueUpdateChan == nil {
 		return
 	}
 	select {
@@ -412,7 +413,7 @@ func (e *poolExecutor) signalNewJob() {
 	default:
 	}
 	select {
-	case e.newJobChan <- true:
+	case e.queueUpdateChan <- true:
 	default:
 	}
 }
@@ -528,7 +529,7 @@ func (e *poolExecutor) Schedule(job Job) error {
 		return ErrExecutorContextDone
 	default:
 		select {
-		case e.newJobChan <- true:
+		case e.queueUpdateChan <- true:
 			e.log.Trace().Msg("Signaled new job added")
 		default:
 			// Do nothing if no one is listening
@@ -555,7 +556,7 @@ func (e *poolExecutor) Start() {
 	e.pausedJobs = make(map[string]pausedJob)
 
 	// Channels (ownership):
-	// - executor owns: taskChan, newJobChan
+	// - executor owns: taskChan, queueUpdateChan
 	// - workerPool owns: taskExecChan, workerPoolDone signaling
 	// - caller owns: errorChan
 	e.taskChan = make(chan Task, e.channelBufferSize)
@@ -565,7 +566,7 @@ func (e *poolExecutor) Start() {
 	}
 	e.workerPoolDone = make(chan struct{})
 	e.runDone = make(chan struct{})
-	e.newJobChan = make(chan bool, 2)
+	e.queueUpdateChan = make(chan bool, 2)
 	e.jobExecChan = make(chan struct{}, e.channelBufferSize)
 
 	// Worker pool
@@ -597,15 +598,15 @@ func (e *poolExecutor) Start() {
 func (e *poolExecutor) Stop() {
 	e.stopOnce.Do(func() {
 		// Stop sequence and channel ownership:
-		// - executor owns newJobChan and taskChan
+		// - executor owns queueUpdateChan and taskChan
 		// - workerPool owns taskExecChan and workerPoolDone
 		// - caller owns errorChan (never closed here)
 
 		// 1) Signal cancellation to all components
 		e.cancel()
 
-		// 2) Close newJobChan to unblock run loop when queue is empty
-		close(e.newJobChan)
+		// 2) Close queueUpdateChan to unblock run loop when queue is empty
+		close(e.queueUpdateChan)
 
 		// 3) Wait for run loop to exit cleanly
 		<-e.runDone

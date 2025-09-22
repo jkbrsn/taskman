@@ -20,10 +20,10 @@ type onDemandExecutor struct {
 	cancel context.CancelFunc
 
 	// Queue
-	mu         sync.RWMutex
-	jobQueue   priorityQueue // A priority queue to hold the scheduled jobs
-	newJobChan chan bool     // Channel to signal that new tasks have entered the queue
-	pausedJobs map[string]pausedJob
+	mu              sync.RWMutex
+	jobQueue        priorityQueue // A priority queue to hold the scheduled jobs
+	queueUpdateChan chan bool     // Channel to signal that new tasks have entered the queue
+	pausedJobs      map[string]pausedJob
 
 	// Operations
 	runDone  chan struct{} // Channel to signal run has stopped
@@ -150,7 +150,7 @@ func (e *onDemandExecutor) Pause(jobID string) error {
 	}
 	e.mu.Unlock()
 
-	e.signalNewJob()
+	e.notifyQueueUpdate()
 
 	return nil
 }
@@ -184,7 +184,7 @@ func (e *onDemandExecutor) Resume(jobID string) error {
 	heap.Push(&e.jobQueue, paused.job)
 	e.mu.Unlock()
 
-	e.signalNewJob()
+	e.notifyQueueUpdate()
 
 	return nil
 }
@@ -275,7 +275,7 @@ func (e *onDemandExecutor) Schedule(job Job) error {
 		// Do nothing if the executor is stopped
 		return ErrExecutorContextDone
 	default:
-		e.signalNewJob()
+		e.notifyQueueUpdate()
 	}
 
 	return nil
@@ -299,7 +299,7 @@ func (e *onDemandExecutor) Start() {
 
 	// Channels
 	e.runDone = make(chan struct{})
-	e.newJobChan = make(chan bool, 2)
+	e.queueUpdateChan = make(chan bool, 2)
 
 	go e.metrics.consumeTaskExecChan(e.taskExecChan)
 	go e.metrics.consumeJobExecChan(e.jobExecChan)
@@ -312,8 +312,8 @@ func (e *onDemandExecutor) Stop() {
 		// Signal cancellation
 		e.cancel()
 
-		// Close newJobChan to unblock run loop when queue is empty
-		close(e.newJobChan)
+		// Close queueUpdateChan to unblock run loop when queue is empty
+		close(e.queueUpdateChan)
 
 		// Wait for run loop to exit
 		<-e.runDone
@@ -394,7 +394,7 @@ func (e *onDemandExecutor) run() {
 			// No jobs: wait for new job or stop
 			stopTimer()
 			select {
-			case <-e.newJobChan:
+			case <-e.queueUpdateChan:
 				continue
 			case <-e.ctx.Done():
 				return
@@ -460,7 +460,7 @@ func (e *onDemandExecutor) run() {
 		case <-fires:
 			// Time to execute next job
 			continue
-		case <-e.newJobChan:
+		case <-e.queueUpdateChan:
 			// New job added; re-evaluate queue head
 			continue
 		case <-e.ctx.Done():
@@ -469,15 +469,18 @@ func (e *onDemandExecutor) run() {
 	}
 }
 
-// signalNewJob signals the executor that a new job has been added to the queue.
-func (e *onDemandExecutor) signalNewJob() {
+// notifyQueueUpdate signals the executor that a new job has been added to the queue.
+func (e *onDemandExecutor) notifyQueueUpdate() {
+	if e.queueUpdateChan == nil {
+		return
+	}
 	select {
 	case <-e.ctx.Done():
 		return
 	default:
 	}
 	select {
-	case e.newJobChan <- true:
+	case e.queueUpdateChan <- true:
 		if e.log.GetLevel() <= zerolog.TraceLevel {
 			e.log.Trace().Msg("Signaled new job added")
 		}
