@@ -314,18 +314,18 @@ func TestPoolExecutor_ScaleDownAfterRemovingJobs(t *testing.T) {
 		t.Fatalf("schedule: %v", err)
 	}
 	// Warm up a bit so it has reason to scale up.
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	exec.poolScaler.scale(time.Now(), 0)
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 
 	prevTarget := exec.workerPool.workerCountTarget.Load()
 
 	// Remove the job and wait past downscale cooldown.
 	require.NoError(t, exec.Remove("remove-me"))
 
-	time.Sleep(exec.poolScaler.cfg.CooldownDown + 150*time.Millisecond)
+	time.Sleep(exec.poolScaler.cfg.CooldownDown)
 	exec.poolScaler.scale(time.Now(), 0)
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 
 	got := exec.workerPool.workerCountTarget.Load()
 	if got >= prevTarget || got < int32(exec.minWorkerCount) {
