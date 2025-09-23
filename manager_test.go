@@ -79,7 +79,7 @@ func runManagerTestSuite(t *testing.T, s *managerTestSuite) {
 	t.Run("RemoveJob", s.TestRemoveJob)
 	t.Run("ReplaceJob", s.TestReplaceJob)
 	t.Run("TaskExecution", s.TestTaskExecution)
-	//t.Run("TaskReexecution", s.TestTaskReexecution) // TODO: tmp deactivated due to drift
+	// t.Run("TaskReexecution", s.TestTaskReexecution) // TODO: tmp deactivated due to drift
 	t.Run("ScheduleTaskDuringExecution", s.TestScheduleTaskDuringExecution)
 	t.Run("ConcurrentScheduleTask", s.TestConcurrentScheduleTask)
 	t.Run("ConcurrentScheduleJob", s.TestConcurrentScheduleJob)
