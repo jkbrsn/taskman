@@ -479,7 +479,8 @@ func (e *onDemandExecutor) rescheduleOrRemoveAtLocked(
 	cadence time.Duration,
 	now time.Time,
 ) {
-	if jobPtr.index < len(e.jobQueue) && e.jobQueue[jobPtr.index].ID == jobPtr.ID {
+	if jobPtr.index >= 0 && jobPtr.index < len(e.jobQueue) &&
+		e.jobQueue[jobPtr.index].ID == jobPtr.ID {
 		entry := e.jobQueue[jobPtr.index]
 		if entry.consumeRun() {
 			removed := heap.Remove(&e.jobQueue, jobPtr.index)
