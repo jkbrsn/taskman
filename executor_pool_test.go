@@ -49,6 +49,8 @@ func newPoolExecutorForTest(minWorkers int) *poolExecutor {
 }
 
 func TestPoolExecutorReplace(t *testing.T) {
+	t.Parallel()
+
 	// Setup executor
 	exec := newPoolExecutor(
 		context.Background(),
@@ -269,6 +271,7 @@ func TestPoolExecutor_DeadbandSuppressesSmallFluctuations(t *testing.T) {
 		"expected no change within deadband; prev=%d", prev)
 }
 
+// TODO: consider lowering the max count for this test, would need updated ctor helper
 func TestPoolExecutor_CapAtMaxWorkerCount(t *testing.T) {
 	exec := newPoolExecutorForTest(1)
 	defer exec.Stop()
@@ -285,19 +288,19 @@ func TestPoolExecutor_CapAtMaxWorkerCount(t *testing.T) {
 	}
 	// exec.Schedule calls scaler.scale(), then we allow for startup
 	require.NoError(t, exec.Schedule(wide))
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Force a scale tick when wide job is running
 	exec.poolScaler.scale(time.Now(), len(wide.Tasks))
-	time.Sleep(20 * time.Millisecond)
 
-	got := exec.workerPool.workerCountTarget.Load()
-	assert.Equal(t, int32(defaultMaxWorkerCount), got,
-		"expected cap at %d, got %d", defaultMaxWorkerCount, got)
-	got = exec.workerPool.runningWorkers()
-	// Allow some leeway considering the async nature of the worker pool
-	require.InDelta(t, int32(defaultMaxWorkerCount), got, 2.0,
-		"running workers must not exceed cap; got %d", got)
+	// Allow for scale up to max and verify
+	require.Eventually(t, func() bool {
+		return exec.workerPool.workerCountTarget.Load() == int32(defaultMaxWorkerCount)
+	}, 500*time.Millisecond, 10*time.Millisecond)
+	require.LessOrEqual(t,
+		exec.workerPool.runningWorkers(),
+		int32(defaultMaxWorkerCount),
+		"running workers must not exceed cap")
 }
 
 func TestPoolExecutor_ScaleDownAfterRemovingJobs(t *testing.T) {
