@@ -78,6 +78,7 @@ func runManagerTestSuite(t *testing.T, s *managerTestSuite) {
 	t.Run("ScheduleJob", s.TestScheduleJob)
 	t.Run("RemoveJob", s.TestRemoveJob)
 	t.Run("ReplaceJob", s.TestReplaceJob)
+	t.Run("PauseResumeJob", s.TestPauseResumeJob)
 	t.Run("TaskExecution", s.TestTaskExecution)
 	// t.Run("TaskReexecution", s.TestTaskReexecution) // TODO: tmp deactivated due to drift
 	t.Run("ScheduleTaskDuringExecution", s.TestScheduleTaskDuringExecution)
@@ -276,6 +277,66 @@ func (s *managerTestSuite) TestReplaceJob(t *testing.T) {
 	thirdJob := getMockedJob(2, "anotherJobID", 10*time.Millisecond, 100*time.Millisecond)
 	err = manager.ReplaceJob(thirdJob)
 	assert.Error(t, err, "Expected replace attempt of non-existent job to produce an error")
+}
+
+func (s *managerTestSuite) TestPauseResumeJob(t *testing.T) {
+	manager := s.newManager()
+	defer manager.Stop()
+
+	executionTimes := make(chan time.Time, 1)
+	jobID := "pause-resume-job"
+	cadence := 100 * time.Millisecond
+	initialDelay := 60 * time.Millisecond
+
+	job := Job{
+		Tasks: []Task{simpleTask{func() error {
+			executionTimes <- time.Now()
+			return nil
+		}}},
+		Cadence:  cadence,
+		ID:       jobID,
+		NextExec: time.Now().Add(initialDelay),
+	}
+
+	require.NoError(t, manager.ScheduleJob(job))
+	require.NoError(t, manager.PauseJob(jobID))
+
+	pausedState, err := manager.exec.Job(jobID)
+	require.NoError(t, err)
+	remaining := max(time.Until(pausedState.NextExec), 0)
+
+	// Verify job does not execute while paused
+	require.Never(t, func() bool {
+		return len(executionTimes) > 0
+	}, remaining+50*time.Millisecond, 5*time.Millisecond,
+		"job executed while paused")
+
+	resumeStart := time.Now()
+	require.NoError(t, manager.ResumeJob(jobID))
+
+	// Verify job executes after resume
+	var executedAt time.Time
+	require.Eventually(t, func() bool {
+		select {
+		case executedAt = <-executionTimes:
+			return true
+		default:
+			return false
+		}
+	}, remaining+100*time.Millisecond, 5*time.Millisecond,
+		"job did not execute after resume (remaining=%s)", remaining)
+
+	elapsed := executedAt.Sub(resumeStart)
+	toleranceEarly := min(remaining, 30*time.Millisecond)
+	minExpected := max(remaining-toleranceEarly, 0)
+	maxExpected := remaining + 80*time.Millisecond
+
+	assert.GreaterOrEqual(t, int64(elapsed), int64(minExpected),
+		"job executed too early after resume (elapsed=%s, expected>=%s)", elapsed, minExpected)
+	assert.LessOrEqual(t, int64(elapsed), int64(maxExpected),
+		"job executed too late after resume (elapsed=%s, expected<=%s)", elapsed, maxExpected)
+
+	require.NoError(t, manager.RemoveJob(jobID))
 }
 
 func (s *managerTestSuite) TestTaskExecution(t *testing.T) {
