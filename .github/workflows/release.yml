@@ -17,8 +17,8 @@ permissions:
   contents: write
 
 env:
-  GO_VERSION: 1.25.1
-  GOLANGCI_LINT_VERSION: v2.4.0
+  GO_VERSION: 1.25.3
+  GOLANGCI_LINT_VERSION: v2.5.0
 
 jobs:
   version-bump-check:
@@ -70,7 +70,7 @@ jobs:
         with:
           fetch-depth: 0   # fetch all history (include tags)
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 

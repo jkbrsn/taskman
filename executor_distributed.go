@@ -487,14 +487,12 @@ func (r *jobRunner) runParallel(errCh chan<- error, taskExecChan chan<- time.Dur
 		if sem != nil {
 			sem <- struct{}{}
 		}
-		wg.Add(1)
-		go func(tt Task, jobID string) {
-			defer wg.Done()
-			safeExecuteTask(r.ctx, jobID, tt, errCh, taskExecChan)
+		wg.Go(func() {
+			safeExecuteTask(r.ctx, r.job.ID, t, errCh, taskExecChan)
 			if sem != nil {
 				<-sem
 			}
-		}(t, r.job.ID)
+		})
 	}
 
 	wg.Wait()

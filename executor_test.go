@@ -181,18 +181,15 @@ func (s *executorTestSuite) TestExecutorConcurrentSchedule(t *testing.T) {
 	numTasksPerGoroutine := 250
 
 	for id := range numGoroutines {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range numTasksPerGoroutine {
 				taskID := fmt.Sprintf("task-%d-%d", id, j)
 				// Use a long cadence to avoid task execution before test ends
 				job := getMockedJob(2, taskID, 2*time.Second, 2*time.Second)
 				assert.NoError(t, exec.Schedule(job), "Error adding job concurrently")
 			}
-		}(id)
+		})
 	}
-
 	wg.Wait()
 
 	// Verify that all tasks are scheduled
@@ -218,9 +215,7 @@ func (s *executorTestSuite) TestExecutorConcurrentExecution(t *testing.T) {
 	var wg sync.WaitGroup
 	errChan := make(chan error, numGoroutines*numJobsPerGoroutine)
 	for id := range numGoroutines {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range numJobsPerGoroutine {
 				jobID := fmt.Sprintf("exec-%d-%d", id, j)
 				job := Job{
@@ -233,9 +228,10 @@ func (s *executorTestSuite) TestExecutorConcurrentExecution(t *testing.T) {
 					errChan <- err
 				}
 			}
-		}(id)
+		})
 	}
 	wg.Wait()
+
 	close(errChan)
 	for err := range errChan {
 		assert.NoError(t, err)
