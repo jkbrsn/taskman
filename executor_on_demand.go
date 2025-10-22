@@ -570,14 +570,12 @@ func (e *onDemandExecutor) runParallel(
 		if sem != nil {
 			sem <- struct{}{}
 		}
-		wg.Add(1)
-		go func(tt Task) {
-			defer wg.Done()
-			safeExecuteTask(e.ctx, jobID, tt, errCh, taskExecChan)
+		wg.Go(func() {
+			safeExecuteTask(e.ctx, jobID, t, errCh, taskExecChan)
 			if sem != nil {
 				<-sem
 			}
-		}(t)
+		})
 	}
 
 	wg.Wait()

@@ -137,20 +137,17 @@ func TestWorkerPoolExecutionError(t *testing.T) {
 		ID: "error-task",
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
 	// Listen to the error channel, confirm error is received
 	timeout := time.After(100 * time.Millisecond)
-	go func() {
-		defer wg.Done()
+	var wg sync.WaitGroup
+	wg.Go(func() {
 		select {
 		case err := <-errorChan:
 			assert.Contains(t, err.Error(), "test error")
 		case <-timeout:
 			assert.Fail(t, "Test timed out waiting on error")
 		}
-	}()
+	})
 
 	// Send the error-returning task to the worker
 	taskChan <- errorTask
@@ -187,13 +184,10 @@ func TestWorkerPoolExecutionPanic(t *testing.T) {
 		ID: "panic-task",
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
 	// Listen to the error channel, confirm error is received
 	timeout := time.After(100 * time.Millisecond)
-	go func() {
-		defer wg.Done()
+	var wg sync.WaitGroup
+	wg.Go(func() {
 		select {
 		case err := <-errorChan:
 			assert.Contains(t, err.Error(), "panic:")
@@ -201,7 +195,7 @@ func TestWorkerPoolExecutionPanic(t *testing.T) {
 		case <-timeout:
 			assert.Fail(t, "Test timed out waiting on error")
 		}
-	}()
+	})
 
 	// Send the panic-returning task to the worker
 	taskChan <- panicTask

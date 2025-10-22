@@ -598,9 +598,7 @@ func (s *managerTestSuite) TestConcurrentScheduleTask(t *testing.T) {
 	numTasksPerGoroutine := 250
 
 	for id := range numGoroutines {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range numTasksPerGoroutine {
 				taskID := fmt.Sprintf("task-%d-%d", id, j)
 				// Use a long cadence to avoid task execution before test ends,
@@ -609,9 +607,8 @@ func (s *managerTestSuite) TestConcurrentScheduleTask(t *testing.T) {
 				_, err := manager.ScheduleTask(task, task.cadence)
 				assert.NoError(t, err, "Error adding task concurrently")
 			}
-		}(id)
+		})
 	}
-
 	wg.Wait()
 
 	// Verify that all tasks are scheduled
@@ -628,9 +625,7 @@ func (s *managerTestSuite) TestConcurrentScheduleJob(t *testing.T) {
 	numJobsPerGoroutine := 250
 
 	for id := range numGoroutines {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range numJobsPerGoroutine {
 				jobID := fmt.Sprintf("job-%d-%d", id, j)
 				// Use a long cadence to avoid job execution before test ends,
@@ -639,9 +634,8 @@ func (s *managerTestSuite) TestConcurrentScheduleJob(t *testing.T) {
 				err := manager.ScheduleJob(job)
 				assert.NoError(t, err, "Error adding job concurrently")
 			}
-		}(id)
+		})
 	}
-
 	wg.Wait()
 
 	// Verify that all tasks are scheduled

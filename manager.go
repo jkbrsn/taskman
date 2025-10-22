@@ -269,10 +269,8 @@ func New(opts ...Option) *TaskManager {
 			tm.deParallel,
 			tm.deMaxPar,
 		)
-	case ModePool:
-		// Intentionally fall through as ModePool is the default
-		fallthrough
 	default:
+		// case ModePool is the default
 		tm.exec = newPoolExecutor(
 			tm.ctx,
 			tm.log,
