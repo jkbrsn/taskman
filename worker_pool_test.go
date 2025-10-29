@@ -55,6 +55,36 @@ func TestWorkerPoolStartStop(t *testing.T) {
 	assert.Equal(t, int32(4), pool.runningWorkers(), "Expected 4 running workers")
 }
 
+func TestWorkerPoolStopWhileScaling(t *testing.T) {
+	pool := getWorkerPool(2)
+	var scalerWG sync.WaitGroup
+	stopScaler := make(chan struct{})
+
+	scalerWG.Add(1)
+	go func() {
+		defer scalerWG.Done()
+		for {
+			select {
+			case <-stopScaler:
+				return
+			default:
+				pool.enqueueWorkerScaling(5)
+			}
+		}
+	}()
+
+	// Allow scaler goroutine to enqueue at least one request.
+	time.Sleep(10 * time.Millisecond)
+
+	pool.stop()
+	close(stopScaler)
+	scalerWG.Wait()
+
+	assert.True(t, pool.stopping.Load(), "Pool should be marked as stopping")
+	assert.Equal(t, int32(0), pool.runningWorkers(), "Expected no running workers after stop")
+	assert.Equal(t, int32(0), pool.activeWorkers(), "Expected no active workers after stop")
+}
+
 func TestWorkerPoolTaskExecution(t *testing.T) {
 	errorChan := make(chan error, 1)
 	taskExecChan := make(chan time.Duration, 1)
