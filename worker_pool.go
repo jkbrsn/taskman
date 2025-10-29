@@ -35,6 +35,7 @@ type workerPool struct {
 	workersActive     atomic.Int32 // Number of active workers
 	workersRunning    atomic.Int32 // Number of running workers
 	workerCountTarget atomic.Int32 // Target number of workers
+	stopping          atomic.Bool  // Indicates whether the pool is shutting down
 
 	errorChan       chan<- error       // Send-only channel for errors
 	taskExecChan    chan time.Duration // Channel to send execution times
@@ -49,8 +50,9 @@ type workerPool struct {
 	downScaleMinInterval time.Duration // configurable per pool; default defaultDownScaleMinInterval
 	maxWorkers           int           // Maximum number of workers allowed
 
-	mu sync.Mutex
-	wg sync.WaitGroup
+	mu       sync.Mutex
+	wg       sync.WaitGroup
+	scalerWG sync.WaitGroup
 }
 
 // worker represents a worker that executes tasks.
@@ -83,6 +85,9 @@ func (wp *workerPool) availableWorkers() int32 {
 
 // addWorkers adds to the worker pool by starting new workers.
 func (wp *workerPool) addWorkers(nWorkers int) {
+	if wp.stopping.Load() {
+		return
+	}
 	wp.log.Debug().Msgf("Adding %d new workers to the pool", nWorkers)
 	wp.wg.Add(nWorkers)
 	for i := 0; i < nWorkers; i++ {
@@ -164,6 +169,9 @@ func (wp *workerPool) busyWorkers() []xid.ID {
 
 // enqueueWorkerScaling enqueues a worker count scaling request.
 func (wp *workerPool) enqueueWorkerScaling(target int32) {
+	if wp.stopping.Load() {
+		return
+	}
 	select {
 	case <-wp.stopPoolChan:
 		// Worker pool is shutting down, exit
@@ -195,12 +203,20 @@ func (wp *workerPool) idleWorkers() []xid.ID {
 // processWorkerCountScaling listens for worker count requests and adjusts the
 // worker count accordingly.
 func (wp *workerPool) processWorkerCountScaling() {
+	defer wp.scalerWG.Done()
+
 	for {
 		select {
 		case <-wp.stopPoolChan:
 			// Worker count scaling received stop signal, exiting
 			return
-		case newTargetCount := <-wp.workerCountChan:
+		case newTargetCount, ok := <-wp.workerCountChan:
+			if !ok {
+				return
+			}
+			if wp.stopping.Load() {
+				continue
+			}
 			wp.mu.Lock()
 			wp.adjustWorkerCount(newTargetCount)
 			wp.mu.Unlock()
@@ -293,8 +309,12 @@ func (wp *workerPool) startWorker(id xid.ID) {
 
 // stop signals the worker pool to stop processing tasks and exit.
 func (wp *workerPool) stop() {
+	wp.stopping.Store(true)
 	// Signal workers to stop
 	close(wp.stopPoolChan)
+
+	// Wait for scaler goroutine to exit before waiting on workers.
+	wp.scalerWG.Wait()
 
 	// Wait for all workers to finish
 	wp.wg.Wait()
@@ -424,6 +444,7 @@ func newWorkerPool(
 	// Record initial sizing as a scaling event to reflect startup sizing in metrics
 	pool.workerScalingEvents.Add(1)
 
+	pool.scalerWG.Add(1)
 	go pool.processWorkerCountScaling()
 
 	return pool
