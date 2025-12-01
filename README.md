@@ -1,4 +1,9 @@
-# taskman [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs] [![Go Version](https://img.shields.io/badge/go-1.25.1-blue.svg)](https://golang.org/dl/) [![CI](https://github.com/jkbrsn/taskman/actions/workflows/ci.yml/badge.svg)](https://github.com/jkbrsn/taskman/actions/workflows/ci.yml) [![Latest Release](https://img.shields.io/github/v/release/jkbrsn/taskman)](https://github.com/jkbrsn/taskman/releases)
+# taskman
+
+[![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
+[![Go Version](https://img.shields.io/badge/go-1.25.1-blue.svg)](https://golang.org/dl/)
+[![CI](https://github.com/jkbrsn/taskman/actions/workflows/ci.yml/badge.svg)](https://github.com/jkbrsn/taskman/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/jkbrsn/taskman)](https://github.com/jkbrsn/taskman/releases)
 
 [godocs]: http://godoc.org/github.com/jkbrsn/taskman
 
